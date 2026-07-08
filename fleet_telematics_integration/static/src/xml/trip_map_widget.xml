@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates xml:space="preserve">
+
+    <t t-name="fleet_telematics_integration.TripMapWidget" owl="1">
+        <div class="o_trip_map_widget">
+            <div t-if="state.error" class="alert alert-warning py-2 px-3 mb-1 small">
+                ⚠️ <t t-esc="state.error"/>
+            </div>
+            <div t-if="state.pointCount > 0" class="text-muted small mb-1">
+                📍 <t t-esc="state.pointCount"/> จุด GPS
+                <span class="ms-3">
+                    <span style="display:inline-block;width:10px;height:3px;background:#3b82f6;vertical-align:middle"/> เส้นทาง
+                </span>
+                <span class="ms-2">
+                    <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#22c55e;vertical-align:middle"/> เริ่ม
+                </span>
+                <span class="ms-2">
+                    <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#ef4444;vertical-align:middle"/> สิ้นสุด
+                </span>
+                <span class="ms-2">
+                    <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#f97316;vertical-align:middle"/> Harsh Event
+                </span>
+            </div>
+            <div t-ref="tripMapContainer" style="height:400px;border:1px solid #dee2e6;border-radius:4px;"/>
+        </div>
+    </t>
+
+</templates>

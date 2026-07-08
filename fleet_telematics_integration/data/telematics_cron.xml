@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  data/telematics_cron.xml
+  Scheduled Actions (Cron Jobs)
+
+  UC-04: Cron ดึง Trip Logs → เรียก fleet.telematics.log._cron_sync_trips()
+         ทุก 5 นาที (interval_number=5, interval_type='minutes')
+
+         Flow: GET /api/v1/trips/unsynced?last_id=...
+               → บันทึกลง Odoo (Idempotent: search ก่อน write/create)
+               → PATCH /api/v1/trips/batch/mark-synced
+               → เก็บ last_id ใหม่ลง ir.config_parameter
+         Logic ทั้งหมดอยู่ใน models/telematics_log.py section [I]–[K]
+-->
+<odoo>
+
+    <!-- UC-04: ดึง Trip Logs ทุก 5 นาที — model: fleet.telematics.log -->
+    <record id="ir_cron_telematics_sync_5min" model="ir.cron">
+        <field name="name">Fleet Telematics: Sync Trips (5 min)</field>
+        <field name="model_id" ref="model_fleet_telematics_log"/>
+        <field name="state">code</field>
+        <field name="code">model._cron_sync_trips()</field>
+        <field name="interval_number">5</field>
+        <field name="interval_type">minutes</field>
+        <field name="active">True</field>
+        <field name="user_id" ref="base.user_root"/>
+    </record>
+
+    <!-- คำนวณโบนัสรายเดือน ทุกวันที่ 1 -->
+    <record id="ir_cron_telematics_monthly_incentive" model="ir.cron">
+        <field name="name">Fleet Telematics: Monthly Incentive</field>
+        <field name="model_id" ref="model_fleet_telematics_incentive"/>
+        <field name="state">code</field>
+        <field name="code">model._cron_calculate_monthly_incentive()</field>
+        <field name="interval_number">1</field>
+        <field name="interval_type">months</field>
+        <field name="active">True</field>
+        <field name="user_id" ref="base.user_root"/>
+    </record>
+
+    <!-- เพิ่มใหม่ — Reconcile Device mapping ระหว่าง Odoo กับ Backend
+         ทุกวัน (GET /api/v1/config_device) กันข้อมูลเงียบๆ ไม่ตรงกัน
+         เมื่อมีคนไปแก้ device/vehicle ตรงที่ Backend โดยไม่ผ่าน Odoo -->
+    <record id="ir_cron_telematics_reconcile_devices" model="ir.cron">
+        <field name="name">Fleet Telematics: Reconcile Devices (Daily)</field>
+        <field name="model_id" ref="model_fleet_telematics_config"/>
+        <field name="state">code</field>
+        <field name="code">model._cron_reconcile_devices()</field>
+        <field name="interval_number">1</field>
+        <field name="interval_type">days</field>
+        <field name="active">True</field>
+        <field name="user_id" ref="base.user_root"/>
+    </record>
+
+</odoo>

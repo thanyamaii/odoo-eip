@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_telematics_backend_report_form" model="ir.ui.view">
+        <field name="name">fleet.telematics.backend.report.form</field>
+        <field name="model">fleet.telematics.backend.report</field>
+        <field name="arch" type="xml">
+            <form string="Backend Reports (ข้อมูลสด)">
+
+                <!-- Driver selector -->
+                <group>
+                    <field name="driver_id"
+                           help="เลือก Driver สำหรับรายงานรายคน — เว้นว่างสำหรับรายงานทั้งฟลีท"/>
+                </group>
+
+                <!-- กลุ่ม 1: ทั้งฟลีท -->
+                <div class="alert alert-info py-2 px-3 mb-1" role="alert">
+                    <b>📊 รายงานภาพรวม Fleet</b> — ไม่ต้องเลือก Driver
+                </div>
+                <div class="row mb-3 px-3 gap-2">
+                    <button name="action_fetch_fleet_summary"
+                            string="Fleet Summary (ภาพรวม Fleet)"
+                            type="object" class="btn btn-primary col-auto"/>
+                    <button name="action_fetch_all_driver_scores"
+                            string="Driver Score (ทุกคน)"
+                            type="object" class="btn btn-secondary col-auto"/>
+                    <button name="action_fetch_maintenance_forecast"
+                            string="Maintenance Forecast (ซ่อมบำรุง)"
+                            type="object" class="btn btn-warning col-auto"/>
+                    <button name="action_fetch_fuel_efficiency"
+                            string="Fuel Efficiency (ทั้งฟลีท)"
+                            type="object" class="btn btn-secondary col-auto"/>
+                </div>
+
+                <!-- กลุ่ม 2: รายคน -->
+                <div class="alert alert-secondary py-2 px-3 mb-1" role="alert">
+                    <b>👤 รายงานรายคน</b> — ต้องเลือก Driver ก่อนกด
+                </div>
+                <div class="row mb-3 px-3 gap-2">
+                    <button name="action_fetch_driver_score_single"
+                            string="Driver Score (รายคน)"
+                            type="object" class="btn btn-secondary col-auto"/>
+                    <button name="action_fetch_driver_events"
+                            string="Harsh Events (รายคน)"
+                            type="object" class="btn btn-secondary col-auto"/>
+                    <button name="action_fetch_fuel_summary"
+                            string="Fuel Summary (รายคน)"
+                            type="object" class="btn btn-secondary col-auto"/>
+                </div>
+
+                <!-- ผลลัพธ์ -->
+                <field name="result_html" widget="html"
+                       invisible="not result_html"/>
+
+                <footer>
+                    <button string="ย้อนกลับ" class="btn btn-secondary" special="cancel"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_telematics_backend_report" model="ir.actions.act_window">
+        <field name="name">Backend Reports (ข้อมูลสด)</field>
+        <field name="res_model">fleet.telematics.backend.report</field>
+        <field name="view_mode">form</field>
+        <field name="target">current</field>
+    </record>
+
+</odoo>

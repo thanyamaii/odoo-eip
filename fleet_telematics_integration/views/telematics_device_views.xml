@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  views/telematics_device_views.xml
+  UC-01 — จัดการรถ + Device: เดิมมีแค่โมเดล ไม่มีหน้าจอเรียกใช้เลย
+  เพิ่มไฟล์นี้ใหม่ทั้งหมด เรียก POST /config_device/register(+batch)
+-->
+<odoo>
+
+    <record id="view_telematics_device_list" model="ir.ui.view">
+        <field name="name">fleet.telematics.device.list</field>
+        <field name="model">fleet.telematics.device</field>
+        <field name="arch" type="xml">
+            <list string="Telematics Devices">
+                <field name="device_id"/>
+                <field name="device_name"/>
+                <field name="vehicle_id"/>
+                <field name="register_status" widget="badge"
+                       decoration-success="register_status == 'registered'"
+                       decoration-danger="register_status == 'error'"
+                       decoration-muted="register_status == 'draft'"/>
+                <field name="registered_at"/>
+                <field name="active" widget="boolean_toggle"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_telematics_device_form" model="ir.ui.view">
+        <field name="name">fleet.telematics.device.form</field>
+        <field name="model">fleet.telematics.device</field>
+        <field name="arch" type="xml">
+            <form string="Telematics Device">
+                <header>
+                    <button name="action_register_device" type="object"
+                            string="Register" class="oe_highlight"
+                            invisible="register_status == 'registered'"/>
+                    <field name="register_status" widget="statusbar"
+                           statusbar_visible="draft,registered"/>
+                </header>
+                <sheet>
+                    <group>
+                        <group string="Device Info">
+                            <field name="device_id" placeholder="KTC-001"/>
+                            <field name="device_name"/>
+                            <field name="vehicle_id"/>
+                            <field name="active"/>
+                            <field name="available"/>
+                        </group>
+                        <group string="Backend Sync Status">
+                            <field name="registered_at"/>
+                            <field name="date_update_latest"/>
+                            <field name="synced_at"/>
+                            <field name="last_error" invisible="not last_error"/>
+                        </group>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_telematics_device_search" model="ir.ui.view">
+        <field name="name">fleet.telematics.device.search</field>
+        <field name="model">fleet.telematics.device</field>
+        <field name="arch" type="xml">
+            <search string="Search Devices">
+                <field name="device_id"/>
+                <field name="device_name"/>
+                <field name="vehicle_id"/>
+                <filter string="Registered" name="registered"
+                        domain="[('register_status', '=', 'registered')]"/>
+                <filter string="Not Registered" name="not_registered"
+                        domain="[('register_status', '=', 'draft')]"/>
+                <filter string="Error" name="error"
+                        domain="[('register_status', '=', 'error')]"/>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_telematics_device" model="ir.actions.act_window">
+        <field name="name">Devices</field>
+        <field name="res_model">fleet.telematics.device</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_telematics_device_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nodata_smiling_face">ยังไม่มี Device ที่ลงทะเบียน</p>
+            <p>กดสร้างใหม่เพื่อลงทะเบียน GPS Device กับ Backend (รูปแบบ KTC-XXX)</p>
+        </field>
+    </record>
+
+</odoo>

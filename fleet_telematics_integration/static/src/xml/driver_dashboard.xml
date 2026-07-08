@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates xml:space="preserve">
+
+<t t-name="fleet_telematics_integration.DriverDashboard" owl="1">
+<div class="o_driver_dashboard p-3">
+
+    <!-- Header -->
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h4 class="mb-0">📊 Driver Dashboard</h4>
+        <button class="btn btn-sm btn-outline-secondary" t-on-click="_loadDashboard">
+            🔄 รีเฟรช
+        </button>
+    </div>
+
+    <!-- Loading -->
+    <div t-if="state.loading" class="text-center py-5 text-muted">
+        <div class="spinner-border spinner-border-sm me-2"/>
+        กำลังโหลดข้อมูล...
+    </div>
+
+    <!-- Error -->
+    <div t-elif="state.error" class="alert alert-warning">
+        ⚠️ <t t-esc="state.error"/>
+    </div>
+
+    <t t-else="">
+
+        <!-- Energy KPI Bar -->
+        <div t-if="state.energyKPI" class="row g-3 mb-4">
+            <div class="col-3">
+                <div class="card border-0 shadow-sm text-center p-3">
+                    <div class="fs-3 fw-bold text-primary">
+                        <t t-esc="state.drivers.length"/>
+                    </div>
+                    <div class="small text-muted">คนขับทั้งหมด</div>
+                </div>
+            </div>
+            <div class="col-3">
+                <div class="card border-0 shadow-sm text-center p-3">
+                    <div class="fs-3 fw-bold text-info">
+                        <t t-esc="state.energyKPI.distance.toLocaleString()"/>
+                    </div>
+                    <div class="small text-muted">ระยะทางรวม (km)</div>
+                </div>
+            </div>
+            <div class="col-3">
+                <div class="card border-0 shadow-sm text-center p-3">
+                    <div class="fs-3 fw-bold text-warning">
+                        <t t-esc="state.energyKPI.fuel.toFixed(1)"/>
+                    </div>
+                    <div class="small text-muted">เชื้อเพลิงรวม (ลิตร)</div>
+                </div>
+            </div>
+            <div class="col-3">
+                <div class="card border-0 shadow-sm text-center p-3">
+                    <div class="fs-3 fw-bold text-danger">
+                        <t t-esc="state.energyKPI.harsh"/>
+                    </div>
+                    <div class="small text-muted">Harsh Events รวม</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row g-3">
+
+            <!-- Scorecard List -->
+            <div class="col-5">
+                <div class="card shadow-sm h-100">
+                    <div class="card-header fw-bold">🏆 Driver Scorecard</div>
+                    <div class="card-body p-0" style="overflow-y:auto;max-height:420px">
+                        <t t-foreach="state.drivers" t-as="d" t-key="d.driver_id">
+                            <div
+                                class="d-flex align-items-center p-3 border-bottom"
+                                style="cursor:pointer"
+                                t-att-class="state.selectedDriver === d.driver_id ? 'bg-light' : ''"
+                                t-on-click="() => this.onDriverClick(d.driver_id)">
+
+                                <!-- Avatar initials -->
+                                <div class="rounded-circle d-flex align-items-center justify-content-center me-3 fw-bold text-white"
+                                     t-att-style="'width:40px;height:40px;background:' + this.getTierConfig(d.tier).color + ';flex-shrink:0'">
+                                    <t t-esc="d.name[0]"/>
+                                </div>
+
+                                <!-- ชื่อ + stats -->
+                                <div class="flex-grow-1 overflow-hidden">
+                                    <div class="fw-semibold text-truncate">
+                                        <t t-esc="d.name"/>
+                                    </div>
+                                    <div class="small text-muted">
+                                        <t t-esc="d.trips"/> ทริป •
+                                        <t t-esc="d.distance"/> km •
+                                        Idle <t t-esc="d.idle"/> นาที
+                                    </div>
+                                </div>
+
+                                <!-- Score + Tier -->
+                                <div class="text-end ms-2" style="flex-shrink:0">
+                                    <div class="fs-5 fw-bold"
+                                         t-att-style="'color:' + this.getTierConfig(d.tier).color">
+                                        <t t-esc="d.avg_score"/>
+                                    </div>
+                                    <span class="badge"
+                                          t-att-style="'background:' + this.getTierConfig(d.tier).bg + ';color:' + this.getTierConfig(d.tier).color">
+                                        <t t-esc="d.tier"/>
+                                    </span>
+                                </div>
+                            </div>
+                        </t>
+                        <div t-if="!state.drivers.length" class="text-center text-muted py-4">
+                            ยังไม่มีข้อมูล Trip Log
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Trend Chart + Detail -->
+            <div class="col-7">
+                <div class="card shadow-sm h-100">
+                    <div class="card-header fw-bold d-flex justify-content-between align-items-center">
+                        <span>📈 Score Trend</span>
+                        <t t-if="state.selectedDriver">
+                            <button class="btn btn-xs btn-outline-primary btn-sm"
+                                    t-on-click="(ev) => this.onViewTrips(state.selectedDriver, ev)">
+                                ดู Trip Logs →
+                            </button>
+                        </t>
+                    </div>
+                    <div class="card-body">
+                        <t t-if="state.trendData.length">
+                            <div style="height:220px;position:relative">
+                                <canvas t-ref="trendChart"/>
+                            </div>
+                        </t>
+                        <div t-else="" class="text-center text-muted py-5">
+                            เลือกคนขับด้านซ้ายเพื่อดู trend กราฟ
+                        </div>
+
+                        <!-- Driver Detail KPI -->
+                        <t t-if="state.selectedDriver">
+                            <t t-set="sel" t-value="state.drivers.find(d => d.driver_id === state.selectedDriver)"/>
+                            <t t-if="sel">
+                                <div class="row g-2 mt-2 text-center border-top pt-2">
+                                    <div class="col-3">
+                                        <div class="fw-bold text-primary"><t t-esc="sel.trips"/></div>
+                                        <div class="small text-muted">ทริป</div>
+                                    </div>
+                                    <div class="col-3">
+                                        <div class="fw-bold text-info"><t t-esc="sel.distance"/></div>
+                                        <div class="small text-muted">km</div>
+                                    </div>
+                                    <div class="col-3">
+                                        <div class="fw-bold text-warning"><t t-esc="sel.fuel.toFixed(1)"/></div>
+                                        <div class="small text-muted">ลิตร</div>
+                                    </div>
+                                    <div class="col-3">
+                                        <div class="fw-bold text-danger"><t t-esc="sel.harsh"/></div>
+                                        <div class="small text-muted">Harsh</div>
+                                    </div>
+                                </div>
+                            </t>
+                        </t>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </t>
+
+</div>
+</t>
+
+</templates>

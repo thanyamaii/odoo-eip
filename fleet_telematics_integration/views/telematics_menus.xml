@@ -1,0 +1,209 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  views/telematics_menus.xml
+  ไฟล์สร้างแถบเมนูหลักและเมนูย่อยของ Fleet Telematics
+  โครงสร้างตรงตาม UI Structure ที่กำหนด 100%
+
+  Fleet Telematics (Root App)
+  ├── Dashboard
+  │   ├── KPI Summary
+  │   ├── Fuel & Energy Analysis
+  │   └── Incentive Overview
+  ├── Trip Logs
+  │   ├── Trip List
+  │   └── Trip Analytics
+  ├── Event Logs
+  ├── Scoring Config
+  ├── Incentive / Bonus
+  ├── Reports (Export PDF/Excel)
+  └── Settings
+-->
+<odoo>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!--  Root App — Fleet Telematics                                   -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <menuitem id="menu_fleet_telematics_root"
+              name="Fleet Telematics"
+              sequence="80"
+              web_icon="fleet_telematics_integration,static/description/icon.png"/>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!--  2.0 Devices — ปิดเมนูนี้แล้ว (2026-06-30)                       -->
+    <!--  เดิมแยกเป็นเมนูต่างหาก ทำให้มี 2 ทางผูก Device กับรถพร้อมกัน    -->
+    <!--  (อีกทางคือแท็บ "Telematics Settings" ในฟอร์มรถ fleet.vehicle)  -->
+    <!--  เสี่ยงข้อมูลขัดแย้งกัน — รวมเหลือทางเดียวในหน้ารถแทนแล้ว        -->
+    <!--  โมเดล fleet.telematics.device ยังอยู่ในระบบ (ไม่ลบ เพื่อไม่ให้  -->
+    <!--  Upgrade พังถ้ามีข้อมูลอยู่แล้ว) แค่ไม่แสดงเมนูอีกต่อไป          -->
+    <!--
+    <menuitem id="menu_telematics_devices"
+              name="Devices"
+              parent="menu_fleet_telematics_root"
+              action="action_telematics_device"
+              groups="fleet.fleet_group_manager"
+              sequence="5"/>
+    -->
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!--  2.1 Dashboard                                                  -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <menuitem id="menu_telematics_dashboard"
+              name="Dashboard"
+              parent="menu_fleet_telematics_root"
+              sequence="10"/>
+
+    <!-- KPI Summary → Driver Dashboard OWL (FDD §12.6) -->
+    <menuitem id="menu_telematics_dashboard_kpi"
+              name="KPI Summary"
+              parent="menu_telematics_dashboard"
+              action="action_telematics_driver_dashboard"
+              sequence="10"/>
+
+    <!-- Fuel &amp; Energy Analysis: Fuel Usage, Fuel/km, Idle Time -->
+    <menuitem id="menu_telematics_dashboard_fuel"
+              name="Fuel &amp; Energy Analysis"
+              parent="menu_telematics_dashboard"
+              action="action_telematics_fuel_summary"
+              sequence="20"/>
+
+    <!-- Incentive Overview: กราฟแท่งโบนัส + สัดส่วน Tier -->
+    <menuitem id="menu_telematics_dashboard_incentive"
+              name="Incentive Overview"
+              parent="menu_telematics_dashboard"
+              action="action_telematics_incentive_summary"
+              sequence="30"/>
+
+    <!-- Live Map (Real-time) — UC-06 (เพิ่มใหม่: เดิมไม่มี widget เลย) -->
+    <record id="action_telematics_live_map" model="ir.actions.client">
+        <field name="name">Live Map</field>
+        <field name="tag">fleet_telematics_live_map</field>
+    </record>
+    <menuitem id="menu_telematics_dashboard_live_map"
+              name="Live Map"
+              parent="menu_telematics_dashboard"
+              action="action_telematics_live_map"
+              sequence="5"/>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!--  2.2 Trip Logs                                                  -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <menuitem id="menu_telematics_trip_logs"
+              name="Trip Logs"
+              parent="menu_fleet_telematics_root"
+              sequence="20"/>
+
+    <!-- Trip List — ตารางรวม + Sync Status -->
+    <menuitem id="menu_telematics_trip_list"
+              name="Trip List"
+              parent="menu_telematics_trip_logs"
+              action="action_telematics_log"
+              sequence="10"/>
+
+    <!-- Vehicle Trip History — ดึงสดจาก Backend GET /vehicles/{id}/trips -->
+    <menuitem id="menu_telematics_vehicle_trip_history"
+              name="Vehicle Trip History"
+              parent="menu_telematics_trip_logs"
+              action="action_telematics_vehicle_trip_history"
+              sequence="15"/>
+
+    <!-- Trip Analytics — Graph + Pivot -->
+    <menuitem id="menu_telematics_trip_analytics"
+              name="Trip Analytics"
+              parent="menu_telematics_trip_logs"
+              action="action_telematics_analytics"
+              sequence="20"/>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!--  2.3 Event Logs                                                 -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <menuitem id="menu_telematics_event_logs"
+              name="Event Logs"
+              parent="menu_fleet_telematics_root"
+              action="action_telematics_event"
+              sequence="30"/>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!--  2.4 Scoring Config                                             -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <menuitem id="menu_telematics_scoring_config"
+              name="Scoring Config"
+              parent="menu_fleet_telematics_root"
+              action="action_telematics_scoring_config"
+              sequence="40"/>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!--  2.5 Incentive / Bonus                                          -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <menuitem id="menu_telematics_incentive"
+              name="Incentive / Bonus"
+              parent="menu_fleet_telematics_root"
+              action="action_telematics_incentive"
+              sequence="50"/>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!--  2.6 Reports — Export PDF / Excel                               -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <menuitem id="menu_telematics_reports"
+              name="Reports"
+              parent="menu_fleet_telematics_root"
+              sequence="60"/>
+
+    <!-- Driver Score Report — แก้แล้ว: เดิมชี้ไป action_telematics_incentive (ผิด ซ้ำกับเมนู Incentive/Bonus) -->
+    <menuitem id="menu_telematics_report_driver_score"
+              name="Driver Score Report"
+              parent="menu_telematics_reports"
+              action="action_telematics_driver_score_report"
+              sequence="10"/>
+
+    <!-- Fuel Efficiency Report -->
+    <menuitem id="menu_telematics_report_fuel"
+              name="Fuel Efficiency Report"
+              parent="menu_telematics_reports"
+              action="action_telematics_report_fuel_efficiency"
+              sequence="20"/>
+
+    <!-- Fleet Summary -->
+    <menuitem id="menu_telematics_report_fleet_summary"
+              name="Fleet Summary"
+              parent="menu_telematics_reports"
+              action="action_telematics_report_fleet_summary"
+              sequence="30"/>
+
+    <!-- Incentive Summary -->
+    <menuitem id="menu_telematics_report_incentive"
+              name="Incentive Summary"
+              parent="menu_telematics_reports"
+              action="action_telematics_report_incentive_summary"
+              sequence="40"/>
+
+    <!-- Fuel &amp; Score Report — รวม wizard ใหม่ที่ครอบคลุมทุก endpoint -->
+    <menuitem id="menu_telematics_report_backend_live"
+              name="Backend Reports (ข้อมูลสด)"
+              parent="menu_telematics_reports"
+              action="action_telematics_backend_report"
+              sequence="50"/>
+
+    <!-- Payload Inbox — ปิดเมนูแล้ว (2026-07-01)
+         ไม่ได้อยู่ใน scope FDD เลยสักบรรทัด เป็นของที่ทีมเดิมเขียนทิ้งไว้
+         ไม่ลบโมเดลทิ้งเผื่อมีข้อมูลอยู่แล้ว แค่ซ่อนเมนูออก
+    <menuitem id="menu_telematics_payload_inbox"
+              name="Payload Inbox"
+              parent="menu_fleet_telematics_root"
+              action="action_telematics_payload"
+              groups="fleet.fleet_group_manager"
+              sequence="95"/>
+    -->
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!--  Settings — Fleet Telematics API Config                         -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- Settings — จำกัดเฉพาะ fleet_group_manager เท่านั้น (เดิมไม่มี groups=
+         ทำให้ user ทั่วไปกดแล้วเจอ Access Error เพราะไม่มีสิทธิ์ในโมเดลนี้) -->
+    <menuitem id="menu_telematics_settings"
+              name="Settings"
+              parent="menu_fleet_telematics_root"
+              action="fleet_telematics_integration.action_open_telematics_config"
+              groups="fleet.fleet_group_manager"
+              sequence="99"/>
+
+</odoo>

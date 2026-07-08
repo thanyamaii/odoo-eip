@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  views/telematics_sync_wizard_views.xml
+  (เพิ่มใหม่ 2026-07) — Manual Sync Wizard ตาม FDD §12.1
+-->
+<odoo>
+
+    <record id="view_telematics_sync_wizard_form" model="ir.ui.view">
+        <field name="name">fleet.telematics.sync.wizard.form</field>
+        <field name="model">fleet.telematics.sync.wizard</field>
+        <field name="arch" type="xml">
+            <form string="Manual Sync from Backend">
+                <group>
+                    <p class="text-muted">
+                        กดปุ่มด้านล่างเพื่อสั่งดึง Trip Log จาก Backend ทันที
+                        แทนที่จะรอ Cron อัตโนมัติ (ทุก 5 นาที) — ใช้ logic
+                        เดียวกับ Cron ทุกประการ ผลลัพธ์จะเหมือนกัน
+                    </p>
+                    <field name="result_message" readonly="1"
+                           invisible="not result_message" widget="text"/>
+                    <field name="last_sync_at" readonly="1"
+                           invisible="not last_sync_at"/>
+                </group>
+                <footer>
+                    <button name="action_sync_now" string="🔄 Sync Now"
+                            type="object" class="btn-primary"/>
+                    <button string="ปิด" class="btn-secondary" special="cancel"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_telematics_sync_wizard" model="ir.actions.act_window">
+        <field name="name">Manual Sync from Backend</field>
+        <field name="res_model">fleet.telematics.sync.wizard</field>
+        <field name="view_mode">form</field>
+        <field name="target">new</field>
+    </record>
+
+</odoo>

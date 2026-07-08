@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  views/telematics_report_views.xml  (ไฟล์ใหม่)
+  UC-07/08 — ดึงรายงานสำเร็จรูปจาก Backend โดยตรง แทนการคำนวณซ้ำใน Odoo
+-->
+<odoo>
+
+    <record id="view_telematics_fuel_report_wizard_form" model="ir.ui.view">
+        <field name="name">fleet.telematics.fuel.report.wizard.form</field>
+        <field name="model">fleet.telematics.fuel.report.wizard</field>
+        <field name="arch" type="xml">
+            <form string="รายงานจาก Backend (สด)">
+                <group>
+                    <field name="driver_id"
+                           help="เว้นว่างได้สำหรับ Fuel Efficiency Report (รวมทั้งฟลีท) — ต้องเลือกสำหรับ Driver Score / Fuel Summary รายคน"/>
+                </group>
+                <div class="o_horizontal_separator"/>
+                <footer>
+                    <button name="action_fetch_fuel_efficiency"
+                            string="ดึง Fuel Efficiency Report (ทั้งฟลีท)"
+                            type="object" class="btn-primary"/>
+                    <button name="action_fetch_driver_score"
+                            string="ดึง Driver Score (รายคน)"
+                            type="object" class="btn-secondary"/>
+                    <button name="action_fetch_fuel_summary"
+                            string="ดึง Fuel Summary (รายคน)"
+                            type="object" class="btn-secondary"/>
+                </footer>
+                <field name="result_html" widget="html"
+                       invisible="not result_html"/>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_telematics_fuel_report_wizard" model="ir.actions.act_window">
+        <field name="name">Fuel &amp; Score Report (Backend)</field>
+        <field name="res_model">fleet.telematics.fuel.report.wizard</field>
+        <field name="view_mode">form</field>
+        <field name="target">new</field>
+    </record>
+
+</odoo>

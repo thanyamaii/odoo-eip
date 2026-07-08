@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  security/telematics_security.xml
+  Record Rules — ตามที่ FDD ระบุไว้ว่า "driver เห็นแค่ตัวเอง"
+  เดิมโมดูลนี้ไม่มี ir.rule เลยทั้งโมดูล ทำให้ทุกคนใน fleet_group_user
+  เห็น trip / event / incentive ของพนักงานคนอื่นได้ทั้งหมด — แก้ที่ไฟล์นี้
+
+  หมายเหตุ: rule นี้ map ผ่าน hr.employee.user_id == ผู้ใช้ที่ล็อกอินอยู่
+  - ไม่กระทบ fleet_group_manager เพราะ rule ใส่ groups="fleet.fleet_group_user"
+    เท่านั้น ผู้จัดการยังเห็นข้อมูลของทุกคนตามปกติ
+-->
+<odoo>
+
+    <!-- Trip Log: driver เห็นเฉพาะทริปของตัวเอง -->
+    <record id="rule_telematics_log_own_only" model="ir.rule">
+        <field name="name">Telematics Log: Driver เห็นเฉพาะทริปตัวเอง</field>
+        <field name="model_id" ref="model_fleet_telematics_log"/>
+        <field name="domain_force">[('driver_id.user_id', '=', user.id)]</field>
+        <field name="groups" eval="[(4, ref('fleet.fleet_group_user'))]"/>
+        <field name="perm_read">1</field>
+        <field name="perm_write">0</field>
+        <field name="perm_create">0</field>
+        <field name="perm_unlink">0</field>
+    </record>
+
+    <!-- Event Log: driver เห็นเฉพาะ event ของทริปตัวเอง -->
+    <record id="rule_telematics_event_own_only" model="ir.rule">
+        <field name="name">Telematics Event: Driver เห็นเฉพาะ event ของตัวเอง</field>
+        <field name="model_id" ref="model_fleet_telematics_event"/>
+        <field name="domain_force">[('trip_id.driver_id.user_id', '=', user.id)]</field>
+        <field name="groups" eval="[(4, ref('fleet.fleet_group_user'))]"/>
+        <field name="perm_read">1</field>
+        <field name="perm_write">0</field>
+        <field name="perm_create">0</field>
+        <field name="perm_unlink">0</field>
+    </record>
+
+    <!-- Incentive: driver เห็นเฉพาะโบนัส/คะแนนของตัวเอง
+         (คู่กับการปิด perm_read ฝั่ง ir.model.access.csv ที่แก้ไปแล้วก่อนหน้านี้
+          — ถ้าในอนาคตเปิด perm_read ให้ user อีกครั้ง rule นี้จะคุมไม่ให้เห็นข้ามคน) -->
+    <record id="rule_telematics_incentive_own_only" model="ir.rule">
+        <field name="name">Telematics Incentive: Driver เห็นเฉพาะของตัวเอง</field>
+        <field name="model_id" ref="model_fleet_telematics_incentive"/>
+        <field name="domain_force">[('driver_id.user_id', '=', user.id)]</field>
+        <field name="groups" eval="[(4, ref('fleet.fleet_group_user'))]"/>
+        <field name="perm_read">1</field>
+        <field name="perm_write">0</field>
+        <field name="perm_create">0</field>
+        <field name="perm_unlink">0</field>
+    </record>
+
+    <!-- Manager: เห็นข้อมูลทุกคนตามปกติ (ไม่จำกัด) -->
+    <record id="rule_telematics_log_manager_all" model="ir.rule">
+        <field name="name">Telematics Log: Manager เห็นทุกคน</field>
+        <field name="model_id" ref="model_fleet_telematics_log"/>
+        <field name="domain_force">[(1, '=', 1)]</field>
+        <field name="groups" eval="[(4, ref('fleet.fleet_group_manager'))]"/>
+    </record>
+
+    <record id="rule_telematics_event_manager_all" model="ir.rule">
+        <field name="name">Telematics Event: Manager เห็นทุกคน</field>
+        <field name="model_id" ref="model_fleet_telematics_event"/>
+        <field name="domain_force">[(1, '=', 1)]</field>
+        <field name="groups" eval="[(4, ref('fleet.fleet_group_manager'))]"/>
+    </record>
+
+    <record id="rule_telematics_incentive_manager_all" model="ir.rule">
+        <field name="name">Telematics Incentive: Manager เห็นทุกคน</field>
+        <field name="model_id" ref="model_fleet_telematics_incentive"/>
+        <field name="domain_force">[(1, '=', 1)]</field>
+        <field name="groups" eval="[(4, ref('fleet.fleet_group_manager'))]"/>
+    </record>
+
+</odoo>

@@ -1,0 +1,208 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  reports/energy_report.xml
+  FDD §12.6: Energy Report — QWeb PDF สรุปค่าเชื้อเพลิง + idling รายเดือน
+  model: fleet.telematics.log
+-->
+<odoo>
+
+    <!-- Paper format A4 landscape -->
+    <record id="paperformat_energy_report" model="report.paperformat">
+        <field name="name">Fleet Telematics A4 Landscape</field>
+        <field name="default" eval="False"/>
+        <field name="format">A4</field>
+        <field name="orientation">Landscape</field>
+        <field name="margin_top">15</field>
+        <field name="margin_bottom">10</field>
+        <field name="margin_left">10</field>
+        <field name="margin_right">10</field>
+        <field name="header_line" eval="False"/>
+        <field name="header_spacing">10</field>
+    </record>
+
+    <!-- Report Action -->
+    <record id="action_report_energy" model="ir.actions.report">
+        <field name="name">Energy &amp; Fuel Efficiency Report</field>
+        <field name="model">fleet.telematics.log</field>
+        <field name="report_type">qweb-pdf</field>
+        <field name="report_name">fleet_telematics_integration.report_energy_document</field>
+        <field name="report_file">fleet_telematics_integration.report_energy_document</field>
+        <field name="paperformat_id" ref="paperformat_energy_report"/>
+        <field name="binding_model_id" ref="model_fleet_telematics_log"/>
+        <field name="binding_type">report</field>
+    </record>
+
+    <!-- QWeb Template -->
+    <template id="report_energy_document">
+        <t t-call="web.html_container">
+            <t t-foreach="docs" t-as="doc">
+                <t t-call="web.external_layout">
+                    <div class="page">
+
+                        <!-- Header -->
+                        <div class="row mb-3">
+                            <div class="col-12 text-center">
+                                <h3>Energy &amp; Fuel Efficiency Report</h3>
+                                <p class="text-muted">
+                                    รายงานสรุปค่าเชื้อเพลิงและเวลาจอดเดินเครื่อง
+                                </p>
+                            </div>
+                        </div>
+
+                        <!-- Trip Info -->
+                        <div class="row mb-3">
+                            <div class="col-6">
+                                <table class="table table-sm">
+                                    <tr>
+                                        <td class="fw-bold">รถ</td>
+                                        <td><t t-esc="doc.vehicle_id.name or '-'"/></td>
+                                    </tr>
+                                    <tr>
+                                        <td class="fw-bold">คนขับ</td>
+                                        <td><t t-esc="doc.driver_id.name or '-'"/></td>
+                                    </tr>
+                                    <tr>
+                                        <td class="fw-bold">Device</td>
+                                        <td><t t-esc="doc.telematics_device_id or '-'"/></td>
+                                    </tr>
+                                </table>
+                            </div>
+                            <div class="col-6">
+                                <table class="table table-sm">
+                                    <tr>
+                                        <td class="fw-bold">เริ่มทริป</td>
+                                        <td><t t-esc="doc.trip_start"/></td>
+                                    </tr>
+                                    <tr>
+                                        <td class="fw-bold">สิ้นสุดทริป</td>
+                                        <td><t t-esc="doc.trip_end or '-'"/></td>
+                                    </tr>
+                                    <tr>
+                                        <td class="fw-bold">สถานะ</td>
+                                        <td><t t-esc="doc.state"/></td>
+                                    </tr>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- Energy KPI -->
+                        <div class="row mb-3">
+                            <div class="col-12">
+                                <h5 class="border-bottom pb-1">Energy KPI</h5>
+                            </div>
+                            <div class="col-3 text-center border-end">
+                                <div class="fs-4 fw-bold text-primary">
+                                    <t t-esc="'%.2f' % doc.distance_km"/>
+                                </div>
+                                <div class="text-muted small">ระยะทาง (km)</div>
+                            </div>
+                            <div class="col-3 text-center border-end">
+                                <div class="fs-4 fw-bold text-warning">
+                                    <t t-esc="'%.3f' % doc.fuel_used_est"/>
+                                </div>
+                                <div class="text-muted small">เชื้อเพลิงโดยประมาณ (ลิตร)</div>
+                            </div>
+                            <div class="col-3 text-center border-end">
+                                <div class="fs-4 fw-bold text-danger">
+                                    <t t-esc="'%.1f' % doc.idle_min"/>
+                                </div>
+                                <div class="text-muted small">เวลาจอดเดินเครื่อง (นาที)</div>
+                            </div>
+                            <div class="col-3 text-center">
+                                <div class="fs-4 fw-bold text-success">
+                                    <t t-esc="'%.2f' % doc.driver_score"/>
+                                </div>
+                                <div class="text-muted small">คะแนนคนขับ</div>
+                            </div>
+                        </div>
+
+                        <!-- Harsh Events -->
+                        <div class="row mb-3">
+                            <div class="col-12">
+                                <h5 class="border-bottom pb-1">เหตุการณ์อันตราย</h5>
+                            </div>
+                            <div class="col-12">
+                                <table class="table table-bordered table-sm">
+                                    <thead class="table-dark">
+                                        <tr>
+                                            <th>ประเภท</th>
+                                            <th class="text-center">จำนวนครั้ง</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td>เบรคหนัก (Harsh Brake)</td>
+                                            <td class="text-center">
+                                                <t t-esc="doc.harsh_brake_count"/>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td>เร่งกะทันหัน (Harsh Accel)</td>
+                                            <td class="text-center">
+                                                <t t-esc="doc.harsh_accel_count"/>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td>หักเลี้ยวแรง (Harsh Corner)</td>
+                                            <td class="text-center">
+                                                <t t-esc="doc.harsh_corner_count"/>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td>ขับเร็วเกิน (Speeding)</td>
+                                            <td class="text-center">
+                                                <t t-esc="doc.speeding_count"/>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- Events Detail -->
+                        <t t-if="doc.event_ids">
+                            <div class="row">
+                                <div class="col-12">
+                                    <h5 class="border-bottom pb-1">รายละเอียดเหตุการณ์</h5>
+                                </div>
+                                <div class="col-12">
+                                    <table class="table table-bordered table-sm">
+                                        <thead class="table-secondary">
+                                            <tr>
+                                                <th>เวลา</th>
+                                                <th>ประเภท</th>
+                                                <th class="text-center">ความรุนแรง</th>
+                                                <th class="text-center">ความเร็ว (km/h)</th>
+                                                <th>พิกัด</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <t t-foreach="doc.event_ids" t-as="ev">
+                                                <tr>
+                                                    <td><t t-esc="ev.occurred_at"/></td>
+                                                    <td><t t-esc="ev.event_type"/></td>
+                                                    <td class="text-center">
+                                                        <t t-esc="'%.2f' % ev.severity"/>
+                                                    </td>
+                                                    <td class="text-center">
+                                                        <t t-esc="'%.1f' % ev.speed_at_event"/>
+                                                    </td>
+                                                    <td>
+                                                        <t t-esc="'%.6f' % ev.lat"/>,
+                                                        <t t-esc="'%.6f' % ev.lon"/>
+                                                    </td>
+                                                </tr>
+                                            </t>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </t>
+
+                    </div>
+                </t>
+            </t>
+        </t>
+    </template>
+
+</odoo>

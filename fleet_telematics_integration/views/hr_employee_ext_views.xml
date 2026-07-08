@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  views/hr_employee_ext_views.xml
+  (เพิ่มใหม่ 2026-07) เปิดให้กรอก telematics_base_salary บนฟอร์มพนักงาน
+  จำเป็นเฉพาะกรณีที่ระบบไม่มีโมดูล hr_contract ติดตั้งอยู่ (ดู
+  models/hr_employee_ext.py และ docs/known_risks.md)
+-->
+<odoo>
+
+    <record id="view_employee_form_telematics_inherit" model="ir.ui.view">
+        <field name="name">hr.employee.form.telematics.inherit</field>
+        <field name="model">hr.employee</field>
+        <field name="inherit_id" ref="hr.view_employee_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//sheet" position="inside">
+                <group string="🚗 Fleet Telematics — Bonus Calculation"
+                       name="telematics_bonus_group">
+                    <field name="telematics_base_salary"/>
+                    <div class="text-muted" colspan="2">
+                        ใช้คำนวณ Incentive/Bonus ของระบบ Fleet Telematics
+                        เท่านั้น — จำเป็นเฉพาะกรณีที่ระบบไม่มีโมดูล
+                        hr_contract ติดตั้งอยู่ (ถ้ามี hr_contract และมี
+                        สัญญาจ้าง active อยู่แล้ว ระบบจะใช้ค่าจากที่นั่นก่อน
+                        เป็นหลัก ไม่ต้องกรอกซ้ำที่นี่)
+                    </div>
+                </group>
+            </xpath>
+        </field>
+    </record>
+
+</odoo>

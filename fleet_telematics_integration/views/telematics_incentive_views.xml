@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  views/telematics_incentive_views.xml
+  หน้าจออนุมัติเงินโบนัสพนักงานของ HR
+  Workflow: [ Confirm ] → [ Approve ] → [ Mark as Paid ]
+  เชื่อมโยงกับ hr.contract เพื่อดึงเงินเดือนฐานจริง
+-->
+<odoo>
+
+    <!-- ── List View ─────────────────────────────────────────────────── -->
+    <record id="view_telematics_incentive_list" model="ir.ui.view">
+        <field name="name">fleet.telematics.incentive.list</field>
+        <field name="model">fleet.telematics.incentive</field>
+        <field name="arch" type="xml">
+            <list decoration-success="state=='paid'"
+                  decoration-info="state=='approved'"
+                  decoration-warning="state=='confirmed'"
+                  decoration-muted="state=='draft'">
+                <field name="driver_id"/>
+                <field name="period_label"/>
+                <field name="total_trips"/>
+                <field name="avg_score"/>
+                <field name="min_score"/>
+                <field name="total_harsh_events"/>
+                <field name="incentive_tier" widget="badge"/>
+                <field name="bonus_pct"/>
+                <field name="base_salary"   optional="hide"/>
+                <field name="bonus_amount"  sum="Total Bonus (THB)"/>
+                <field name="state"         widget="badge"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- ── Form View ─────────────────────────────────────────────────── -->
+    <record id="view_telematics_incentive_form" model="ir.ui.view">
+        <field name="name">fleet.telematics.incentive.form</field>
+        <field name="model">fleet.telematics.incentive</field>
+        <field name="arch" type="xml">
+            <form>
+                <header>
+                    <!-- Workflow Buttons -->
+                    <button name="action_confirm"   string="Confirm"   type="object"
+                            class="btn-primary"   invisible="state != 'draft'"/>
+                    <button name="action_approve"   string="Approve"   type="object"
+                            class="btn-primary"   invisible="state != 'confirmed'"/>
+                    <button name="action_mark_paid" string="Mark as Paid" type="object"
+                            class="btn-success"   invisible="state != 'approved'"/>
+                    <button name="action_reset"     string="Reset"     type="object"
+                            class="btn-secondary" invisible="state not in ('confirmed','approved')"/>
+                    <button name="action_refresh_bonus_from_backend" string="Refresh from Backend"
+                            type="object" class="btn-secondary"
+                            invisible="state not in ('draft','confirmed')"
+                            help="ดึง bonus_pct ล่าสุดจาก GET /drivers/{id}/bonus ใหม่"/>
+                    <field name="state" widget="statusbar"
+                           statusbar_visible="draft,confirmed,approved,paid"/>
+                </header>
+                <sheet>
+                    <div class="alert alert-warning" role="alert"
+                         invisible="bonus_source != 'local_fallback'">
+                        ⚠️ ตัวเลขโบนัสนี้คำนวณจาก Local Fallback เพราะเรียก Backend ไม่สำเร็จ
+                        — กด "Refresh from Backend" อีกครั้งก่อน Approve จริง
+                    </div>
+                    <group>
+                        <group string="ข้อมูลพนักงาน">
+                            <field name="driver_id"/>
+                            <field name="period_month"/>
+                            <field name="period_year"/>
+                            <field name="period_label" readonly="1"/>
+                            <field name="scoring_config_id"/>
+                            <field name="approved_by" readonly="1"/>
+                        </group>
+                        <group string="สรุปผลรายเดือน">
+                            <field name="total_trips"/>
+                            <field name="total_distance_km"/>
+                            <field name="avg_score"/>
+                            <field name="min_score"/>
+                            <field name="total_harsh_events"/>
+                            <field name="total_idle_min"/>
+                        </group>
+                    </group>
+                    <group string="ผลโบนัส">
+                        <group>
+                            <field name="incentive_tier" widget="badge"/>
+                            <field name="bonus_pct"/>
+                            <field name="bonus_source" readonly="1"/>
+                            <field name="bonus_last_synced" readonly="1"/>
+                        </group>
+                        <group>
+                            <!-- base_salary ดึงจาก hr.contract (สัญญาจ้าง) -->
+                            <field name="base_salary" string="Base Salary (จาก hr.contract)"/>
+                            <field name="bonus_amount"/>
+                        </group>
+                    </group>
+                    <field name="note" placeholder="หมายเหตุ..."/>
+                </sheet>
+                <!-- UC-10 Audit Log — บันทึกทุกครั้งที่ state เปลี่ยน
+                     (draft→confirmed→approved→paid) พร้อมชื่อผู้ทำรายการ
+                     และเวลา อัตโนมัติผ่าน mail.thread (ดู tracking=True
+                     บน field state + message_post ใน action_* ทุกตัว) -->
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <!-- ── Pivot: Incentive Summary ───────────────────────────────────── -->
+    <record id="view_telematics_incentive_pivot" model="ir.ui.view">
+        <field name="name">fleet.telematics.incentive.pivot</field>
+        <field name="model">fleet.telematics.incentive</field>
+        <field name="arch" type="xml">
+            <pivot string="Incentive Summary">
+                <field name="driver_id"    type="row"/>
+                <field name="period_label" type="col"/>
+                <field name="avg_score"    type="measure"/>
+                <field name="bonus_amount" type="measure"/>
+                <field name="total_trips"  type="measure"/>
+            </pivot>
+        </field>
+    </record>
+
+    <!-- ── Graph: กราฟแท่งโบนัสรายเดือน (Incentive Overview Dashboard) ── -->
+    <record id="view_telematics_incentive_graph" model="ir.ui.view">
+        <field name="name">fleet.telematics.incentive.graph</field>
+        <field name="model">fleet.telematics.incentive</field>
+        <field name="arch" type="xml">
+            <graph string="Bonus Overview" type="bar" sample="1">
+                <field name="driver_id"    type="row"/>
+                <field name="period_label" type="col"/>
+                <field name="bonus_amount" type="measure"/>
+            </graph>
+        </field>
+    </record>
+
+    <!-- ── Actions ────────────────────────────────────────────────────── -->
+    <record id="action_telematics_incentive" model="ir.actions.act_window">
+        <field name="name">Incentive / Bonus</field>
+        <field name="res_model">fleet.telematics.incentive</field>
+        <field name="view_mode">list,pivot,graph,form</field>
+    </record>
+
+    <!-- Incentive Summary shortcut สำหรับ Dashboard -->
+    <record id="action_telematics_incentive_summary" model="ir.actions.act_window">
+        <field name="name">Incentive Overview</field>
+        <field name="res_model">fleet.telematics.incentive</field>
+        <field name="view_mode">graph,pivot,list</field>
+    </record>
+
+    <!-- [แก้ไข 2026-07-06] Reports > Incentive Summary เดิมชี้ไป action
+         เดียวกับ Dashboard > Incentive Overview เป๊ะ — แยก action ใหม่ให้
+         Reports โดยเฉพาะ: เรียง list ก่อน (เหมาะกับงาน HR export/ตรวจสอบ)
+         และ group by สถานะอนุมัติ (state) แทนที่จะเป็นกราฟภาพรวมอย่างเดียว -->
+    <record id="action_telematics_report_incentive_summary" model="ir.actions.act_window">
+        <field name="name">Incentive Summary</field>
+        <field name="res_model">fleet.telematics.incentive</field>
+        <field name="view_mode">list,pivot,graph</field>
+        <field name="context">{'group_by': 'state'}</field>
+    </record>
+
+</odoo>

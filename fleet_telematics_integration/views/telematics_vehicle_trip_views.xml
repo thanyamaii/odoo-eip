@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_telematics_vehicle_trip_history_form" model="ir.ui.view">
+        <field name="name">fleet.telematics.vehicle.trip.history.form</field>
+        <field name="model">fleet.telematics.vehicle.trip.history</field>
+        <field name="arch" type="xml">
+            <form string="ประวัติการเดินทางของรถ (Backend)">
+                <sheet>
+                    <!-- Filter -->
+                    <group string="เลือกรถและช่วงวันที่">
+                        <group>
+                            <field name="vehicle_id" string="Vehicle ID"
+                                   placeholder="เช่น 1, 43"/>
+                            <field name="vehicle_name" string="ชื่อรถ" readonly="1"/>
+                            <field name="synced_only"/>
+                        </group>
+                        <group>
+                            <field name="date_from"/>
+                            <field name="date_to"/>
+                            <field name="limit" string="แสดงต่อหน้า"/>
+                        </group>
+                    </group>
+
+                    <!-- Action buttons -->
+                    <div class="d-flex gap-2 mb-3">
+                        <button name="action_fetch"
+                                string="🔍 ดึงข้อมูล"
+                                type="object" class="btn btn-primary"/>
+                        <button name="action_export_excel"
+                                string="📥 Export Excel"
+                                type="object" class="btn btn-success"
+                                invisible="not has_result"/>
+                        <button name="action_prev_page"
+                                string="◀ หน้าก่อน"
+                                type="object" class="btn btn-secondary"
+                                invisible="not has_result or page &lt;= 1"/>
+                        <button name="action_next_page"
+                                string="หน้าถัดไป ▶"
+                                type="object" class="btn btn-secondary"
+                                invisible="not has_result or page &gt;= total_pages"/>
+                    </div>
+
+                    <!-- Result -->
+                    <field name="result_html" widget="html"
+                           invisible="not has_result" nolabel="1"/>
+
+                    <!-- hidden -->
+                    <field name="page"        invisible="1"/>
+                    <field name="total_trips" invisible="1"/>
+                    <field name="total_pages" invisible="1"/>
+                    <field name="has_result"  invisible="1"/>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_telematics_vehicle_trip_history" model="ir.actions.act_window">
+        <field name="name">ประวัติการเดินทางของรถ</field>
+        <field name="res_model">fleet.telematics.vehicle.trip.history</field>
+        <field name="view_mode">form</field>
+        <field name="target">current</field>
+    </record>
+
+</odoo>

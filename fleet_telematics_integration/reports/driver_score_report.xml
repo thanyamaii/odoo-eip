@@ -1,0 +1,198 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  reports/driver_score_report.xml
+  FDD §12.6: Monthly Score Report — QWeb PDF รายงานคะแนน + โบนัส ส่ง HR
+  model: fleet.telematics.incentive
+-->
+<odoo>
+
+    <!-- Report Action -->
+    <record id="action_report_driver_score" model="ir.actions.report">
+        <field name="name">Monthly Score &amp; Bonus Report</field>
+        <field name="model">fleet.telematics.incentive</field>
+        <field name="report_type">qweb-pdf</field>
+        <field name="report_name">fleet_telematics_integration.report_driver_score_document</field>
+        <field name="report_file">fleet_telematics_integration.report_driver_score_document</field>
+        <field name="binding_model_id" ref="model_fleet_telematics_incentive"/>
+        <field name="binding_type">report</field>
+    </record>
+
+    <!-- QWeb Template -->
+    <template id="report_driver_score_document">
+        <t t-call="web.html_container">
+            <t t-foreach="docs" t-as="doc">
+                <t t-call="web.external_layout">
+                    <div class="page">
+
+                        <!-- Header -->
+                        <div class="row mb-3">
+                            <div class="col-12 text-center">
+                                <h3>Monthly Score &amp; Bonus Report</h3>
+                                <p class="text-muted">
+                                    รายงานคะแนนพฤติกรรมการขับรถและโบนัสประจำเดือน
+                                </p>
+                            </div>
+                        </div>
+
+                        <!-- Employee Info -->
+                        <div class="row mb-3">
+                            <div class="col-6">
+                                <table class="table table-sm table-borderless">
+                                    <tr>
+                                        <td class="fw-bold" style="width:40%">พนักงาน</td>
+                                        <td><t t-esc="doc.driver_id.name or '-'"/></td>
+                                    </tr>
+                                    <tr>
+                                        <td class="fw-bold">รหัสพนักงาน</td>
+                                        <td><t t-esc="doc.driver_id.id"/></td>
+                                    </tr>
+                                    <tr>
+                                        <td class="fw-bold">ประจำเดือน</td>
+                                        <td>
+                                            <t t-esc="doc.period_month"/>/
+                                            <t t-esc="doc.period_year"/>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td class="fw-bold">สถานะ</td>
+                                        <td><t t-esc="doc.state"/></td>
+                                    </tr>
+                                </table>
+                            </div>
+                            <div class="col-6">
+                                <table class="table table-sm table-borderless">
+                                    <tr>
+                                        <td class="fw-bold" style="width:50%">Scoring Config</td>
+                                        <td>
+                                            <t t-esc="doc.scoring_config_id.name or '-'"/>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td class="fw-bold">อนุมัติโดย</td>
+                                        <td><t t-esc="doc.approved_by.name or '-'"/></td>
+                                    </tr>
+                                    <tr>
+                                        <td class="fw-bold">แหล่งข้อมูลโบนัส</td>
+                                        <td>
+                                            <t t-esc="doc.bonus_source or '-'"/>
+                                        </td>
+                                    </tr>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- Score KPI -->
+                        <div class="row mb-4 text-center">
+                            <div class="col-12 mb-2">
+                                <h5 class="border-bottom pb-1">สรุปผลประจำเดือน</h5>
+                            </div>
+                            <div class="col-2 border-end">
+                                <div class="fs-3 fw-bold text-primary">
+                                    <t t-esc="doc.total_trips"/>
+                                </div>
+                                <div class="small text-muted">จำนวนทริป</div>
+                            </div>
+                            <div class="col-2 border-end">
+                                <div class="fs-3 fw-bold text-info">
+                                    <t t-esc="'%.1f' % doc.total_distance_km"/>
+                                </div>
+                                <div class="small text-muted">ระยะทางรวม (km)</div>
+                            </div>
+                            <div class="col-2 border-end">
+                                <div class="fs-3 fw-bold text-success">
+                                    <t t-esc="'%.2f' % doc.avg_score"/>
+                                </div>
+                                <div class="small text-muted">คะแนนเฉลี่ย</div>
+                            </div>
+                            <div class="col-2 border-end">
+                                <div class="fs-3 fw-bold text-danger">
+                                    <t t-esc="'%.2f' % doc.min_score"/>
+                                </div>
+                                <div class="small text-muted">คะแนนต่ำสุด</div>
+                            </div>
+                            <div class="col-2 border-end">
+                                <div class="fs-3 fw-bold text-warning">
+                                    <t t-esc="doc.total_harsh_events"/>
+                                </div>
+                                <div class="small text-muted">Harsh Events</div>
+                            </div>
+                            <div class="col-2">
+                                <div class="fs-3 fw-bold text-secondary">
+                                    <t t-esc="'%.1f' % doc.total_idle_min"/>
+                                </div>
+                                <div class="small text-muted">Idle รวม (นาที)</div>
+                            </div>
+                        </div>
+
+                        <!-- Bonus Result -->
+                        <div class="row mb-3">
+                            <div class="col-12 mb-2">
+                                <h5 class="border-bottom pb-1">ผลโบนัส</h5>
+                            </div>
+                            <div class="col-12">
+                                <table class="table table-bordered">
+                                    <tbody>
+                                        <tr>
+                                            <td class="fw-bold bg-light" style="width:35%">
+                                                Tier ผลงาน
+                                            </td>
+                                            <td>
+                                                <span class="badge fs-6"
+                                                      t-attf-style="background:#{
+                                                          'A' == doc.incentive_tier and '#15803D' or
+                                                          'B' == doc.incentive_tier and '#1d4ed8' or
+                                                          'C' == doc.incentive_tier and '#d97706' or
+                                                          '#b91c1c'}">
+                                                    <t t-esc="doc.incentive_tier"/>
+                                                </span>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td class="fw-bold bg-light">โบนัส %</td>
+                                            <td>
+                                                <t t-esc="'%.2f' % doc.bonus_pct"/> %
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td class="fw-bold bg-light">เงินเดือนฐาน (จาก HR Contract)</td>
+                                            <td>
+                                                <t t-esc="'{:,.2f}'.format(doc.base_salary)"/> บาท
+                                            </td>
+                                        </tr>
+                                        <tr class="table-success">
+                                            <td class="fw-bold">โบนัสที่ได้รับ</td>
+                                            <td class="fw-bold fs-5">
+                                                <t t-esc="'{:,.2f}'.format(doc.bonus_amount)"/> บาท
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- Signature -->
+                        <div class="row mt-5">
+                            <div class="col-4 text-center">
+                                <div class="border-top pt-2 mt-5 mx-4">
+                                    ลายมือชื่อพนักงาน
+                                </div>
+                            </div>
+                            <div class="col-4 text-center">
+                                <div class="border-top pt-2 mt-5 mx-4">
+                                    ลายมือชื่อผู้จัดการ
+                                </div>
+                            </div>
+                            <div class="col-4 text-center">
+                                <div class="border-top pt-2 mt-5 mx-4">
+                                    ลายมือชื่อ HR
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+                </t>
+            </t>
+        </t>
+    </template>
+
+</odoo>

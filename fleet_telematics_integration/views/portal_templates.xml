@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  views/portal_templates.xml  (เพิ่มใหม่ 2026-07-06)
+
+  UC-11 — พนักงานดูคะแนนตนเอง (Self-service) ผ่าน Odoo Portal
+  (FDD §2.3: "พนักงานสามารถดูคะแนนตนเองแบบ Self-service ผ่าน Odoo Portal ได้")
+
+  ไฟล์นี้เคยถูกอ้างถึงใน __manifest__.py (data list) และใน
+  controllers/portal.py (request.render(...)) มาตั้งแต่แรก แต่ตัวไฟล์จริง
+  ไม่เคยถูกสร้างขึ้นมาเลย — ผลคือติดตั้งโมดูลจะ error (referenced XML ID
+  ไม่มีอยู่จริง) และต่อให้ข้าม manifest ไปได้ พอเข้า /my/telematics ก็จะ
+  เจอ ValueError: External ID not found ทันที เพิ่มไฟล์นี้เพื่อปิดช่องว่างนั้น
+-->
+<odoo>
+
+    <!-- ══════════════════════════════════════════════════════════════
+         1) เพิ่มการ์ดลิงก์ในหน้า /my (Portal Home) ให้พนักงานเห็นเมนู
+            "คะแนนขับขี่ของฉัน" — ไม่งั้นต้องรู้ URL /my/telematics เอง
+         ══════════════════════════════════════════════════════════════ -->
+    <template id="portal_my_home_telematics" name="Telematics: Portal Home Card"
+              inherit_id="portal.portal_my_home">
+        <xpath expr="//div[hasclass('o_portal_docs')]" position="inside">
+            <t t-if="request.env['hr.employee'].sudo().search_count([('user_id', '=', request.env.user.id)])">
+                <div class="o_portal_category o_portal_telematics_category">
+                    <a href="/my/telematics" class="o_portal_category_header d-flex align-items-center">
+                        <h5 class="mb-0">
+                            <i class="fa fa-tachometer me-2" role="img" aria-label="Score" title="Score"/>
+                            คะแนนขับขี่ของฉัน (Driver Score &amp; Bonus)
+                        </h5>
+                    </a>
+                </div>
+            </t>
+        </xpath>
+    </template>
+
+    <!-- ══════════════════════════════════════════════════════════════
+         2) หน้าแสดงคะแนน + trip ล่าสุด + ประวัติโบนัสรายเดือน
+         ══════════════════════════════════════════════════════════════ -->
+    <template id="portal_my_telematics_score" name="My Driving Score">
+        <t t-call="portal.portal_layout">
+            <t t-set="breadcrumbs_searchbar" t-value="True"/>
+
+            <t t-call="portal.portal_searchbar">
+                <t t-set="title">คะแนนขับขี่ของฉัน</t>
+            </t>
+
+            <div class="container o_portal_my_telematics mt-3">
+
+                <!-- สรุปคะแนนล่าสุด -->
+                <div class="row mb-4">
+                    <div class="col-md-4">
+                        <div class="card text-center p-3">
+                            <span class="text-muted">คะแนนทริปล่าสุด</span>
+                            <span class="display-5 fw-bold"
+                                  t-esc="'%.1f' % latest_score"/>
+                            <span class="text-muted">/ 100</span>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card text-center p-3">
+                            <span class="text-muted">คะแนนเฉลี่ย (15 ทริปล่าสุด)</span>
+                            <span class="display-5 fw-bold"
+                                  t-esc="'%.1f' % avg_score_recent"/>
+                            <span class="text-muted">/ 100</span>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card text-center p-3">
+                            <span class="text-muted">พนักงาน</span>
+                            <span class="h4 fw-bold" t-field="employee.name"/>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ประวัติโบนัสรายเดือน -->
+                <h5 class="mt-4">ประวัติโบนัสรายเดือน (Incentive History)</h5>
+                <table class="table table-striped o_portal_telematics_incentive_table"
+                       t-if="incentives">
+                    <thead>
+                        <tr class="active">
+                            <th>เดือน/ปี</th>
+                            <th>คะแนนเฉลี่ย</th>
+                            <th>Tier</th>
+                            <th>% โบนัส</th>
+                            <th>ยอดโบนัส (THB)</th>
+                            <th>สถานะ</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr t-foreach="incentives" t-as="inc">
+                            <td><span t-field="inc.period_label"/></td>
+                            <td><span t-esc="'%.1f' % inc.avg_score"/></td>
+                            <td>
+                                <span class="badge text-bg-secondary"
+                                      t-esc="inc.incentive_tier"/>
+                            </td>
+                            <td><span t-esc="'%.1f' % inc.bonus_pct"/>%</td>
+                            <td><span t-esc="'{:,.2f}'.format(inc.bonus_amount)"/></td>
+                            <td>
+                                <span t-attf-class="badge {{
+                                    'text-bg-success' if inc.state == 'paid'
+                                    else 'text-bg-info' if inc.state == 'approved'
+                                    else 'text-bg-warning' if inc.state == 'confirmed'
+                                    else 'text-bg-secondary' }}"
+                                      t-esc="inc.state"/>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+                <p t-if="not incentives" class="text-muted">
+                    ยังไม่มีข้อมูลโบนัสรายเดือน
+                </p>
+
+                <!-- ทริปล่าสุด -->
+                <h5 class="mt-4">ทริปล่าสุด (Recent Trips)</h5>
+                <table class="table table-striped o_portal_telematics_trip_table"
+                       t-if="recent_trips">
+                    <thead>
+                        <tr class="active">
+                            <th>วันที่ออกเดินทาง</th>
+                            <th>ระยะทาง (กม.)</th>
+                            <th>คะแนน</th>
+                            <th>เบรคหัก</th>
+                            <th>เร่งกะทันหัน</th>
+                            <th>Idling (นาที)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr t-foreach="recent_trips" t-as="trip">
+                            <td><span t-field="trip.trip_start"/></td>
+                            <td><span t-esc="'%.1f' % trip.distance_km"/></td>
+                            <td><span t-esc="'%.1f' % trip.driver_score"/></td>
+                            <td><span t-esc="trip.harsh_brake_count"/></td>
+                            <td><span t-esc="trip.harsh_accel_count"/></td>
+                            <td><span t-esc="'%.1f' % trip.idle_min"/></td>
+                        </tr>
+                    </tbody>
+                </table>
+                <p t-if="not recent_trips" class="text-muted">
+                    ยังไม่มีประวัติทริปที่ sync เข้าระบบ
+                </p>
+
+            </div>
+        </t>
+    </template>
+
+    <!-- ══════════════════════════════════════════════════════════════
+         3) กรณี user ที่ login เป็น portal user แต่ไม่ได้ผูกกับ
+            hr.employee คนไหนเลย (เช่น customer ทั่วไปที่ไม่ใช่พนักงาน)
+         ══════════════════════════════════════════════════════════════ -->
+    <template id="portal_telematics_no_employee" name="My Driving Score: No Employee Linked">
+        <t t-call="portal.portal_layout">
+            <div class="container mt-4">
+                <div class="alert alert-warning" role="alert">
+                    ไม่พบข้อมูลพนักงานที่ผูกกับบัญชีผู้ใช้นี้ —
+                    กรุณาติดต่อ HR หรือ Fleet Manager เพื่อผูกบัญชี Portal
+                    กับ hr.employee ก่อนใช้งานหน้านี้
+                </div>
+            </div>
+        </t>
+    </template>
+
+</odoo>

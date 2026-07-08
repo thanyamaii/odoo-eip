@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  views/telematics_config_views.xml  [MODIFIED]
+  หน้า Settings — ช่อง API URL เดียว + จดจำ API URL ล่าสุดที่ใช้งานได้อัตโนมัติ
+-->
+<odoo>
+
+    <!-- ── Form View ──────────────────────────────────────────────────── -->
+    <record id="view_telematics_config_form" model="ir.ui.view">
+        <field name="name">fleet.telematics.config.form</field>
+        <field name="model">fleet.telematics.config</field>
+        <field name="arch" type="xml">
+            <form string="Fleet Telematics Settings" create="0" delete="0">
+                <header>
+                    <button name="action_save_and_test"
+                            string="💾 บันทึกและทดสอบการเชื่อมต่อ"
+                            type="object"
+                            class="btn-primary"/>
+                    <!-- เพิ่มใหม่ — GET /api/v1/config_device: เทียบ device/vehicle
+                         mapping ระหว่าง Odoo กับ Backend ทั้งระบบ -->
+                    <button name="action_reconcile_devices"
+                            string="🔍 ตรวจสอบ Device ทั้งหมด (Reconcile)"
+                            type="object"
+                            class="btn-secondary"/>
+                </header>
+                <sheet>
+                    <div class="oe_title">
+                        <h1>Fleet Telematics</h1>
+                        <h3>ตั้งค่าการเชื่อมต่อ Backend</h3>
+                    </div>
+
+                    <!-- System Health Dashboard -->
+                    <group string="🔌 สถานะระบบ">
+                        <group>
+                            <field name="connection_status" widget="badge"
+                                   decoration-success="connection_status == 'ready'"
+                                   decoration-danger="connection_status == 'error'"
+                                   decoration-muted="connection_status == 'untested'"/>
+                            <field name="last_test_at" readonly="1"/>
+                            <field name="last_sync_at" readonly="1"/>
+                        </group>
+                        <group>
+                            <field name="last_confirmed_url" readonly="1"
+                                   string="✅ API URL ล่าสุดที่ใช้งานได้"
+                                   invisible="not last_confirmed_url"/>
+                            <field name="last_error" readonly="1"
+                                   invisible="not last_error" widget="text"/>
+                        </group>
+                    </group>
+
+                    <!-- Device Reconciliation Result (เพิ่มใหม่) -->
+                    <group string="🔍 ผลตรวจสอบ Device (Odoo ↔ Backend)"
+                           invisible="not last_reconciled_at">
+                        <group>
+                            <field name="last_reconciled_at" readonly="1"/>
+                            <field name="device_mismatch_count" readonly="1"
+                                   decoration-danger="device_mismatch_count > 0"
+                                   decoration-success="device_mismatch_count == 0"/>
+                        </group>
+                        <field name="device_mismatch_note" readonly="1"
+                               nolabel="1" widget="text"
+                               invisible="not device_mismatch_note"/>
+                    </group>
+
+                    <!-- [แก้ไข] เหลือช่องเดียวสำหรับ API URL Backend -->
+                    <group string="⚙️ ตั้งค่า Backend API URL">
+                        <field name="name" invisible="1"/>
+                        <field name="api_url"
+                               placeholder="เช่น http://192.168.1.100:8000 หรือ https://mtd.example.com"
+                               string="API URL ของ Backend"
+                               widget="char"/>
+                        <field name="api_key"
+                               password="True"
+                               placeholder="sk-••••••••"
+                               string="API Key"/>
+                    </group>
+
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <!-- ── List View ──────────────────────────────────────────────────── -->
+    <record id="view_telematics_config_list" model="ir.ui.view">
+        <field name="name">fleet.telematics.config.list</field>
+        <field name="model">fleet.telematics.config</field>
+        <field name="arch" type="xml">
+            <list create="0" delete="0">
+                <field name="name"/>
+                <field name="api_url"/>
+                <field name="last_confirmed_url" string="API URL ที่ใช้งานได้ล่าสุด"/>
+                <field name="connection_status" widget="badge"
+                       decoration-success="connection_status == 'ready'"
+                       decoration-danger="connection_status == 'error'"
+                       decoration-muted="connection_status == 'untested'"/>
+                <field name="last_test_at"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- ── Action ─────────────────────────────────────────────────────── -->
+    <!--
+        แก้บั๊ก #1: เปิด Form View ของเรคคอร์ดแรกโดยตรง ไม่ผ่าน List View
+        - view_mode="form" → ข้ามหน้า List
+        - res_id ถูก set โดย server action ด้านล่าง
+    -->
+    <record id="action_telematics_config" model="ir.actions.act_window">
+        <field name="name">Fleet Telematics Settings</field>
+        <field name="res_model">fleet.telematics.config</field>
+        <field name="view_mode">form</field>
+        <field name="target">current</field>
+        <field name="context">{}</field>
+    </record>
+
+    <!--
+        Server Action: ค้นหาเรคคอร์ดแรก (หรือสร้างใหม่ถ้ายังไม่มี)
+        แล้ว redirect ไปหน้า Form ของเรคคอร์ดนั้นโดยตรง
+        → ป้องกันการสร้างแถวซ้ำจากปุ่ม New ในหน้า List
+    -->
+    <record id="action_open_telematics_config" model="ir.actions.server">
+        <field name="name">Open Telematics Config</field>
+        <field name="model_id" ref="model_fleet_telematics_config"/>
+        <field name="state">code</field>
+        <field name="code">
+config = env['fleet.telematics.config'].search([], limit=1, order='id asc')
+if not config:
+    # bootstrap: สร้างเรคคอร์ดแรกของระบบ ต้องส่ง context flag นี้เท่านั้น
+    # ถึงจะผ่าน create() lockdown ใน models/telematics_config.py ได้
+    config = env['fleet.telematics.config'].with_context(
+        allow_telematics_config_create=True
+    ).create({'name': 'Fleet Telematics Settings'})
+
+action = {
+    'type': 'ir.actions.act_window',
+    'name': 'Fleet Telematics Settings',
+    'res_model': 'fleet.telematics.config',
+    'view_mode': 'form',
+    'res_id': config.id,
+    'target': 'current',
+    'views': [(False, 'form')],
+}
+        </field>
+    </record>
+
+</odoo>

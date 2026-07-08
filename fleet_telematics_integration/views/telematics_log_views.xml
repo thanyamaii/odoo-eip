@@ -1,0 +1,333 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  views/telematics_log_views.xml
+  หน้าจอแสดงตารางรายการทริปและหน้ารายละเอียดทริป
+  Sync Status: Draft / Synced / Failed
+  ฝัง GPS Track และ Event List ในหน้า Detail
+-->
+<odoo>
+
+    <!-- ── Search View ────────────────────────────────────────────────── -->
+    <record id="view_telematics_log_search" model="ir.ui.view">
+        <field name="name">fleet.telematics.log.search</field>
+        <field name="model">fleet.telematics.log</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="vehicle_id"/>
+                <field name="driver_id"/>
+                <field name="external_trip_id" string="Trip ID"/>
+                <!-- Sync Status filters -->
+                <filter name="draft"     string="Draft"     domain="[('state','=','draft')]"/>
+                <filter name="synced"    string="Synced"    domain="[('state','=','synced')]"/>
+                <filter name="confirmed" string="Confirmed" domain="[('state','=','confirmed')]"/>
+                <filter name="failed"    string="Failed"    domain="[('state','=','failed')]"/>
+                <separator/>
+                <filter name="low_score" string="คะแนนต่ำ (&lt;70)"
+                        domain="[('driver_score','&lt;',70),('driver_score','&gt;',0)]"/>
+                <filter name="today"
+                        string="วันนี้"
+                        domain="[('trip_start','&gt;=', context_today().strftime('%Y-%m-%d 00:00:00'))]"/>
+                <group>
+                    <filter name="group_driver"  string="Driver"      context="{'group_by':'driver_id'}"/>
+                    <filter name="group_vehicle" string="Vehicle"     context="{'group_by':'vehicle_id'}"/>
+                    <filter name="group_month"   string="Month"       context="{'group_by':'trip_start:month'}"/>
+                    <filter name="group_state"   string="Sync Status" context="{'group_by':'state'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <!-- ── Trip List View ─────────────────────────────────────────────── -->
+    <!--
+        🔒 READ-ONLY LOCKDOWN: ข้อมูลทั้งหมดมาจาก Automated Pipeline
+        (Cron Job ทุก 5 นาที ดึงจาก Backend ภายนอก) และคะแนนในตารางนี้ถูก
+        ส่งต่อไปคำนวณ Incentive/Bonus ในระบบ HR — ห้ามผู้ใช้ทั่วไป
+        สร้าง/ลบ/แก้ไข/ทำซ้ำเรคคอร์ดเองเด็ดขาด เพื่อป้องกัน Data Integrity
+        และความเสี่ยงด้านการเงิน
+    -->
+    <record id="view_telematics_log_list" model="ir.ui.view">
+        <field name="name">fleet.telematics.log.list</field>
+        <field name="model">fleet.telematics.log</field>
+        <field name="arch" type="xml">
+            <list default_order="trip_start desc" sample="1"
+                  create="0" delete="0" edit="0" duplicate="0"
+                  decoration-success="state=='synced'"
+                  decoration-info="state=='confirmed'"
+                  decoration-muted="state=='draft'"
+                  decoration-danger="state=='failed' or (driver_score &lt; 70 and driver_score &gt; 0)">
+                <field name="external_trip_id" string="Trip ID"  optional="show"/>
+                <field name="trip_start"/>
+                <field name="vehicle_id"       string="Vehicle"/>
+                <field name="driver_id"        string="Driver"/>
+                <field name="distance_km"/>
+                <field name="duration_min"/>
+                <field name="avg_speed"         optional="hide"/>
+                <field name="max_speed"         optional="hide"/>
+                <field name="idle_min"          optional="show"/>
+                <field name="fuel_used_est"     optional="show" string="Fuel (L)"/>
+                <field name="harsh_brake_count" optional="show"/>
+                <field name="harsh_accel_count" optional="hide"/>
+                <field name="harsh_corner_count" optional="hide"/>
+                <field name="speeding_count"    optional="show"/>
+                <field name="driver_score"      string="Driver Score"/>
+                <field name="state"             widget="badge"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- ── Trip Form View (Trip Detail) ───────────────────────────────── -->
+    <!-- 🔒 READ-ONLY LOCKDOWN: ดูรายละเอียดได้อย่างเดียว ห้ามแก้/สร้าง/ลบ/ทำซ้ำ -->
+    <record id="view_telematics_log_form" model="ir.ui.view">
+        <field name="name">fleet.telematics.log.form</field>
+        <field name="model">fleet.telematics.log</field>
+        <field name="arch" type="xml">
+            <form create="0" delete="0" edit="0" duplicate="0">
+                <header>
+                    <button name="action_confirm" string="Confirm" type="object"
+                            class="btn-primary" invisible="state != 'draft'"/>
+                    <field name="state" widget="statusbar"
+                           statusbar_visible="draft,confirmed,synced"/>
+                </header>
+                <sheet>
+                    <group>
+                        <group string="Trip Information">
+                            <field name="external_trip_id" readonly="1" string="Trip ID"/>
+                            <field name="vehicle_id"/>
+                            <field name="driver_id"/>
+                            <field name="telematics_device_id" readonly="1"/>
+                            <field name="trip_start"/>
+                            <field name="trip_end"/>
+                            <field name="duration_min" readonly="1"/>
+                        </group>
+                        <group string="สถิติการเดินทาง">
+                            <field name="distance_km"/>
+                            <field name="avg_speed"  string="Average Speed (km/h)"/>
+                            <field name="max_speed"/>
+                            <field name="idle_min"   string="Idle Time (min)"/>
+                            <field name="fuel_used_est" string="Fuel Used (L)"/>
+                        </group>
+                    </group>
+                    <group string="Driver Score &amp; Events">
+                        <group>
+                            <field name="driver_score"/>
+                            <field name="harsh_brake_count"  string="Harsh Brake"/>
+                            <field name="harsh_accel_count"  string="Harsh Acceleration"/>
+                        </group>
+                        <group>
+                            <field name="harsh_corner_count" string="Harsh Corner"/>
+                            <field name="speeding_count"     string="Speeding"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <!-- Tab: Event List -->
+                        <page string="Event List" name="events">
+                            <field name="event_ids">
+                                <list create="0" delete="0" edit="0">
+                                    <field name="occurred_at"    string="เวลาเกิด"/>
+                                    <field name="event_type"     widget="badge"/>
+                                    <field name="severity"/>
+                                    <field name="speed_at_event" string="Speed (km/h)"/>
+                                    <field name="lat"            optional="show"/>
+                                    <field name="lon"            optional="show"/>
+                                    <field name="description"/>
+                                </list>
+                            </field>
+                        </page>
+                        <!-- Tab: GPS Track — แผนที่เส้นทางวิ่ง (FDD §12.6) -->
+                        <page string="🗺️ GPS Track" name="gps">
+                            <div class="mb-2">
+                                <button name="action_load_trip_detail"
+                                        string="📡 โหลด GPS Track จาก Backend"
+                                        type="object" class="btn btn-sm btn-secondary"
+                                        invisible="not external_trip_id"/>
+                                <span invisible="external_trip_id != False"
+                                      class="text-muted small">
+                                    Trip นี้ไม่มี External Trip ID — ไม่สามารถโหลดจาก Backend ได้
+                                </span>
+                            </div>
+                            <!-- แผนที่ Leaflet แสดงเส้นทาง GPS -->
+                            <widget name="trip_map"
+                                    gps_track_json="gps_track_json"
+                                    events="event_ids"
+                                    invisible="not gps_track_json"/>
+                            <!-- fallback: ยังไม่มี GPS data -->
+                            <div invisible="gps_track_json != False"
+                                 class="text-muted text-center py-5">
+                                ยังไม่มีข้อมูล GPS Track — กดปุ่ม "โหลด GPS Track จาก Backend" ด้านบน
+                            </div>
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <!-- ── Graph: Score Trend ──────────────────────────────────────────── -->
+    <record id="view_telematics_log_graph_score" model="ir.ui.view">
+        <field name="name">fleet.telematics.log.graph.score</field>
+        <field name="model">fleet.telematics.log</field>
+        <field name="arch" type="xml">
+            <graph string="Score Trend" type="line" sample="1">
+                <field name="trip_start"   type="row" interval="day"/>
+                <field name="driver_score" type="measure"/>
+            </graph>
+        </field>
+    </record>
+
+    <!-- ── Graph: Harsh Events by Driver ──────────────────────────────── -->
+    <record id="view_telematics_log_graph_harsh" model="ir.ui.view">
+        <field name="name">fleet.telematics.log.graph.harsh</field>
+        <field name="model">fleet.telematics.log</field>
+        <field name="arch" type="xml">
+            <graph string="Harsh Events by Driver" type="bar" sample="1">
+                <field name="driver_id"         type="row"/>
+                <field name="harsh_brake_count"  type="measure"/>
+                <field name="harsh_accel_count"  type="measure"/>
+                <field name="harsh_corner_count" type="measure"/>
+                <field name="speeding_count"     type="measure"/>
+            </graph>
+        </field>
+    </record>
+
+    <!-- ── Graph: Fuel & Idle Summary ─────────────────────────────────── -->
+    <record id="view_telematics_log_graph_fuel" model="ir.ui.view">
+        <field name="name">fleet.telematics.log.graph.fuel</field>
+        <field name="model">fleet.telematics.log</field>
+        <field name="arch" type="xml">
+            <graph string="Fuel &amp; Idle Summary" type="bar" sample="1">
+                <field name="driver_id"    type="row"/>
+                <field name="fuel_used_est" type="measure"/>
+                <field name="idle_min"      type="measure"/>
+                <field name="distance_km"   type="measure"/>
+            </graph>
+        </field>
+    </record>
+
+    <!-- ── Pivot: Full Analytics ───────────────────────────────────────── -->
+    <record id="view_telematics_log_pivot" model="ir.ui.view">
+        <field name="name">fleet.telematics.log.pivot</field>
+        <field name="model">fleet.telematics.log</field>
+        <field name="arch" type="xml">
+            <pivot string="Trip Analytics" sample="1">
+                <field name="driver_id"         type="row"/>
+                <field name="trip_start"        type="col" interval="month"/>
+                <field name="driver_score"       type="measure"/>
+                <field name="distance_km"        type="measure"/>
+                <field name="harsh_brake_count"  type="measure"/>
+                <field name="harsh_accel_count"  type="measure"/>
+                <field name="harsh_corner_count" type="measure"/>
+                <field name="speeding_count"     type="measure"/>
+                <field name="fuel_used_est"      type="measure"/>
+                <field name="idle_min"           type="measure"/>
+            </pivot>
+        </field>
+    </record>
+
+    <!-- ── Actions ────────────────────────────────────────────────────── -->
+    <record id="action_telematics_log" model="ir.actions.act_window">
+        <field name="name">Trip Logs</field>
+        <field name="res_model">fleet.telematics.log</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_telematics_log_search"/>
+    </record>
+
+    <record id="action_telematics_analytics" model="ir.actions.act_window">
+        <field name="name">Trip Analytics</field>
+        <field name="res_model">fleet.telematics.log</field>
+        <field name="view_mode">pivot,graph,list</field>
+        <field name="context">{'search_default_synced': 1}</field>
+        <field name="search_view_id" ref="view_telematics_log_search"/>
+    </record>
+    <!-- ผูกกราฟ Harsh Events เป็นมุมมองกราฟของ Trip Analytics โดยเฉพาะ -->
+    <record id="action_telematics_analytics_view_graph" model="ir.actions.act_window.view">
+        <field name="sequence" eval="1"/>
+        <field name="view_mode">graph</field>
+        <field name="view_id" ref="view_telematics_log_graph_harsh"/>
+        <field name="act_window_id" ref="action_telematics_analytics"/>
+    </record>
+
+    <!-- Driver Dashboard OWL Component (FDD §12.6) แทน KPI Summary graph view เดิม -->
+    <record id="action_telematics_driver_dashboard" model="ir.actions.client">
+        <field name="name">Driver Dashboard</field>
+        <field name="tag">fleet_telematics_driver_dashboard</field>
+    </record>
+
+
+
+    <!-- Fuel &amp; Energy Analysis -->
+    <record id="action_telematics_fuel_summary" model="ir.actions.act_window">
+        <field name="name">Fuel &amp; Energy Analysis</field>
+        <field name="res_model">fleet.telematics.log</field>
+        <field name="view_mode">graph,pivot,list</field>
+        <field name="context">{'search_default_synced': 1}</field>
+        <field name="search_view_id" ref="view_telematics_log_search"/>
+    </record>
+    <!-- ผูกกราฟ Fuel &amp; Idle Summary เป็นมุมมองกราฟของ Fuel &amp; Energy Analysis โดยเฉพาะ -->
+    <record id="action_telematics_fuel_summary_view_graph" model="ir.actions.act_window.view">
+        <field name="sequence" eval="1"/>
+        <field name="view_mode">graph</field>
+        <field name="view_id" ref="view_telematics_log_graph_fuel"/>
+        <field name="act_window_id" ref="action_telematics_fuel_summary"/>
+    </record>
+
+    <!-- Driver Score Report (เมนู Reports) — แยกออกจาก Incentive/Bonus
+         เดิม menu นี้ชี้ไป action_telematics_incentive ผิด ตอนนี้ใช้ action นี้แทน -->
+    <record id="action_telematics_driver_score_report" model="ir.actions.act_window">
+        <field name="name">Driver Score Report</field>
+        <field name="res_model">fleet.telematics.log</field>
+        <field name="view_mode">pivot,graph,list</field>
+        <field name="context">{'search_default_synced': 1, 'group_by': 'driver_id'}</field>
+        <field name="search_view_id" ref="view_telematics_log_search"/>
+    </record>
+    <record id="action_telematics_driver_score_report_view_graph" model="ir.actions.act_window.view">
+        <field name="sequence" eval="1"/>
+        <field name="view_mode">graph</field>
+        <field name="view_id" ref="view_telematics_log_graph_score"/>
+        <field name="act_window_id" ref="action_telematics_driver_score_report"/>
+    </record>
+
+    <!-- ============================================================
+         [แก้ไข 2026-07-06] เดิมเมนู "Fleet Summary" และ "Fuel Efficiency
+         Report" ใน Reports ชี้ไป action เดียวกันเป๊ะกับ "Trip Analytics"
+         (Trip Logs) และ "Fuel & Energy Analysis" (Dashboard) ตามลำดับ —
+         กดคนละเมนูแต่ได้หน้าจอเดียวกันทุก pixel ทำให้สับสน
+         แก้โดยสร้าง action แยกของตัวเองให้ Reports โดยเฉพาะ พร้อม
+         default grouping ที่ต่างออกไปให้มีประโยชน์ในตัวของมันเอง
+         (แนวทางเดียวกับที่ทำกับ Driver Score Report ไปแล้วด้านบน)
+         ============================================================ -->
+
+    <!-- Reports > Fleet Summary — ภาพรวม fleet "รายวัน" (ตาม FDD:
+         "ภาพรวม fleet รายวัน (trips, distance, events)") ต่างจาก
+         Trip Analytics ที่เป็น pivot ระดับทริปเดี่ยวไม่ได้ group ตามวันที่ -->
+    <record id="action_telematics_report_fleet_summary" model="ir.actions.act_window">
+        <field name="name">Fleet Summary</field>
+        <field name="res_model">fleet.telematics.log</field>
+        <field name="view_mode">pivot,graph,list</field>
+        <field name="context">{'search_default_synced': 1, 'group_by': 'trip_start:day'}</field>
+        <field name="search_view_id" ref="view_telematics_log_search"/>
+    </record>
+    <record id="action_telematics_report_fleet_summary_view_graph" model="ir.actions.act_window.view">
+        <field name="sequence" eval="1"/>
+        <field name="view_mode">graph</field>
+        <field name="view_id" ref="view_telematics_log_graph_harsh"/>
+        <field name="act_window_id" ref="action_telematics_report_fleet_summary"/>
+    </record>
+
+    <!-- Reports > Fuel Efficiency Report — สรุป "รายรถ/เดือน" (ตาม FDD:
+         "Fuel report: idling, เชื้อเพลิงต่อ km รายรถ/เดือน") ต่างจาก
+         Fuel & Energy Analysis (Dashboard) ที่ไม่ได้ group ตามรถ -->
+    <record id="action_telematics_report_fuel_efficiency" model="ir.actions.act_window">
+        <field name="name">Fuel Efficiency Report</field>
+        <field name="res_model">fleet.telematics.log</field>
+        <field name="view_mode">pivot,graph,list</field>
+        <field name="context">{'search_default_synced': 1, 'group_by': 'vehicle_id'}</field>
+        <field name="search_view_id" ref="view_telematics_log_search"/>
+    </record>
+    <record id="action_telematics_report_fuel_efficiency_view_graph" model="ir.actions.act_window.view">
+        <field name="sequence" eval="1"/>
+        <field name="view_mode">graph</field>
+        <field name="view_id" ref="view_telematics_log_graph_fuel"/>
+        <field name="act_window_id" ref="action_telematics_report_fuel_efficiency"/>
+    </record>
+
+</odoo>

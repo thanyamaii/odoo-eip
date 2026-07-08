@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  views/fleet_vehicle_ext_views.xml  [MODIFIED]
+  ปุ่มและแท็บ Telematics ในหน้ารถ fleet.vehicle
+  เพิ่ม:
+    - ☀️  เช็คสถานะรถ (Real-time พร้อม status badge: กำลังทำงาน/กำลังรอ/อัปเดตสำเร็จ)
+    - ⬆️  Sync to Backend (ส่งรถ+บอร์ดไป Backend ทันที)
+    - ป๊อปอัพแจ้งเตือนเมื่อรถ/บอร์ดซ้ำ (ดักฝั่ง Frontend ก่อนยิง)
+-->
+<odoo>
+
+    <record id="view_fleet_vehicle_form_telematics_ext" model="ir.ui.view">
+        <field name="name">fleet.vehicle.form.telematics.ext</field>
+        <field name="model">fleet.vehicle</field>
+        <field name="inherit_id" ref="fleet.fleet_vehicle_view_form"/>
+        <field name="arch" type="xml">
+
+            <!-- ── ปุ่มใน Header ─────────────────────────────────────────── -->
+            <xpath expr="//header" position="inside">
+
+                <!-- ลงทะเบียน Device ครั้งแรก (รวมมาจากเมนู "Devices" เดิม
+                     ให้กรอกและกดได้จากหน้านี้ที่เดียว ไม่ต้องสลับเมนู) -->
+                <button name="action_register_device"
+                        string="📝 Register Device"
+                        type="object"
+                        class="btn-primary"
+                        invisible="not telematics_device_id or telematics_register_status == 'registered'"
+                        confirm="ยืนยันลงทะเบียน Device นี้กับ Backend ครั้งแรกใช่ไหม?"/>
+
+                <!-- [งานด่วน] เช็คสถานะแบบ Real-time -->
+                <button name="action_check_vehicle_status"
+                        string="☀️ เช็คสถานะรถ"
+                        type="object"
+                        class="btn-secondary"
+                        invisible="not telematics_device_id"/>
+
+                <!-- ตรวจสอบว่า Device ที่ผูกใน Odoo ตรงกับ Backend จริงไหม
+                     (GET /api/v1/vehicles/{id}/device — เพิ่มใหม่) -->
+                <button name="action_verify_device"
+                        string="🔍 ตรวจสอบ Device"
+                        type="object"
+                        class="btn-secondary"
+                        invisible="not telematics_device_id"/>
+
+                <!-- ส่งรถ + บอร์ดไปยัง Backend ทันที (ใช้ตอน Device ลงทะเบียนแล้ว
+                     แต่ต้องการย้าย/อัปเดตการผูกกับรถคันนี้) -->
+                <button name="action_sync_to_backend"
+                        string="⬆️ ส่งรถและบอร์ดไป Backend"
+                        type="object"
+                        class="btn-primary"
+                        invisible="not telematics_device_id"
+                        confirm="ยืนยันส่งข้อมูลรถและอุปกรณ์ GPS ไปยัง Backend ใช่ไหม?"/>
+
+                <!-- Status Badge แสดง 3 สถานะ -->
+                <field name="sync_status" widget="statusbar"
+                       statusbar_visible="idle,syncing,synced"
+                       invisible="not telematics_device_id"
+                       readonly="1"/>
+
+            </xpath>
+
+            <!-- ── แท็บ Telematics Settings ──────────────────────────────── -->
+            <notebook position="inside">
+                <page string="📡 Telematics Settings" name="telematics">
+
+                    <!-- Status Banner (แสดงตามสถานะล่าสุด) -->
+                    <div class="alert alert-info mb-3" role="alert"
+                         invisible="sync_status != 'syncing'">
+                        ⏳ <strong>กำลังรอ...</strong> ระบบกำลังส่งข้อมูลไปยัง Backend
+                    </div>
+                    <div class="alert alert-warning mb-3" role="alert"
+                         invisible="sync_status != 'idle'">
+                        ⚙️ <strong>กำลังทำงาน</strong> — พร้อมส่งข้อมูล กดปุ่ม ⬆️ เพื่อส่งไป Backend
+                    </div>
+                    <div class="alert alert-success mb-3" role="alert"
+                         invisible="sync_status != 'synced'">
+                        ✅ <strong>อัปเดตสำเร็จ</strong> — ส่งข้อมูลไป Backend เรียบร้อยแล้ว
+                    </div>
+
+                    <!-- เตือนถ้ายังไม่ลงทะเบียน Device กับ Backend เลย -->
+                    <div class="alert alert-secondary mb-3" role="alert"
+                         invisible="not telematics_device_id or telematics_register_status != 'draft'">
+                        📝 Device นี้ยังไม่เคยลงทะเบียนกับ Backend — กรอก Device Name แล้วกด
+                        "Register Device" ด้านบนก่อนใช้งานครั้งแรก
+                    </div>
+                    <div class="alert alert-danger mb-3" role="alert"
+                         invisible="telematics_register_status != 'error'">
+                        ❌ ลงทะเบียนไม่สำเร็จ: <field name="telematics_register_error" readonly="1" nolabel="1"/>
+                    </div>
+
+                    <!-- ผลตรวจสอบ Device ล่าสุด (action_verify_device) -->
+                    <div class="alert alert-danger mb-3" role="alert"
+                         invisible="not device_verify_mismatch">
+                        🔍 <strong>Device ไม่ตรงกับ Backend!</strong>
+                        <field name="device_verify_note" readonly="1" nolabel="1"/>
+                    </div>
+                    <div class="alert alert-success mb-3" role="alert"
+                         invisible="not device_verified_at or device_verify_mismatch">
+                        🔍 ตรวจสอบ Device ล่าสุดแล้ว — ตรงกับ Backend ✅
+                        (<field name="device_verified_at" readonly="1" nolabel="1"/>)
+                    </div>
+
+                    <group>
+                        <group string="อุปกรณ์ GPS">
+                            <field name="telematics_device_id"
+                                   placeholder="เช่น KTC-001"/>
+                            <field name="telematics_device_name"
+                                   placeholder="เช่น Device 1"
+                                   invisible="not telematics_device_id"/>
+                            <field name="driver_id" readonly="1"
+                                   string="คนขับปัจจุบัน"
+                                   widget="many2one_avatar_employee"/>
+                            <field name="driver_backend_id" readonly="1"
+                                   invisible="not driver_id"/>
+                            <field name="telematics_register_status" widget="badge"
+                                   decoration-success="telematics_register_status == 'registered'"
+                                   decoration-danger="telematics_register_status == 'error'"
+                                   decoration-muted="telematics_register_status == 'draft'"
+                                   invisible="not telematics_device_id"/>
+                            <field name="telematics_registered_at" readonly="1"
+                                   invisible="telematics_register_status != 'registered'"/>
+                            <field name="online_status" widget="badge"
+                                   decoration-success="online_status == 'online'"
+                                   decoration-danger="online_status == 'offline'"
+                                   decoration-muted="online_status == 'unknown'"/>
+                            <field name="last_seen"/>
+                            <field name="ignition" widget="boolean_toggle"/>
+                            <field name="current_speed"/>
+                            <field name="sync_status" readonly="1"/>
+                        </group>
+                        <group string="สรุปสถิติ">
+                            <field name="total_trips"/>
+                            <field name="total_distance_km"/>
+                            <field name="avg_driver_score"/>
+                            <field name="last_lat" readonly="1"/>
+                            <field name="last_lon" readonly="1"/>
+                        </group>
+                    </group>
+
+                    <!-- ประวัติ Trip -->
+                    <field name="telematics_log_ids">
+                        <list default_order="trip_start desc">
+                            <field name="trip_start"/>
+                            <field name="driver_id"/>
+                            <field name="distance_km"/>
+                            <field name="duration_min"/>
+                            <field name="driver_score"/>
+                            <field name="harsh_brake_count"/>
+                        </list>
+                    </field>
+                </page>
+            </notebook>
+
+        </field>
+    </record>
+
+</odoo>
