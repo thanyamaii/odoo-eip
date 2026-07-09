@@ -10,14 +10,33 @@
                     <!-- Filter -->
                     <group string="เลือกรถและช่วงวันที่">
                         <group>
-                            <field name="vehicle_id" string="Vehicle ID"
-                                   placeholder="เช่น 1, 43"/>
-                            <field name="vehicle_name" string="ชื่อรถ" readonly="1"/>
+                            <!-- ข้อ 1: เปลี่ยนจากช่องกรอก Vehicle ID (ตัวเลข) เป็น
+                                 Many2one ค้นหา/เลือกได้ด้วยชื่อรุ่นรถ ทะเบียนรถ
+                                 หรือชื่อคนขับ (fleet.vehicle name_search รองรับ
+                                 ค้นด้วย license_plate และ driver_id อยู่แล้ว) -->
+                            <field name="vehicle_id"
+                                   placeholder="พิมพ์ชื่อรถ / ทะเบียน / ชื่อคนขับ เพื่อค้นหา"
+                                   options="{'no_create': True, 'no_open': True}"/>
+                            <field name="vehicle_license_plate"/>
+                            <field name="driver_id"/>
+                            <field name="telematics_device_id"/>
                             <field name="synced_only"/>
                         </group>
                         <group>
-                            <field name="date_from"/>
-                            <field name="date_to"/>
+                            <!-- ข้อ 2: fields.Date ของ Odoo แสดง date picker (ปฏิทิน)
+                                 ให้อัตโนมัติอยู่แล้วเมื่อคลิกที่ช่อง — ใช้ widget
+                                 "daterange" ผูกคู่กันเพื่อให้เลือกช่วงจากปฏิทิน
+                                 เดียวกันได้สะดวกขึ้น (คลิกแล้วเห็นทั้งสองเดือน
+                                 พร้อมไฮไลต์ช่วงที่เลือก) -->
+                            <label for="date_from" string="ช่วงวันที่ต้องการดูประวัติทริป"/>
+                            <div class="o_row">
+                                <field name="date_from" widget="daterange"
+                                       options="{'related_end_date': 'date_to'}"
+                                       string="ตั้งแต่วันที่"/>
+                                <field name="date_to" widget="daterange"
+                                       options="{'related_start_date': 'date_from'}"
+                                       string="ถึงวันที่"/>
+                            </div>
                             <field name="limit" string="แสดงต่อหน้า"/>
                         </group>
                     </group>

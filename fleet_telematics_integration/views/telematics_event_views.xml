@@ -1,40 +1,55 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   views/telematics_event_views.xml
-  หน้าจอแสดงประวัติพฤติกรรมเสี่ยงรวม (Event Logs)
+  หน้าจอแสดงประวัติพฤติกรรมเสี่ยงรวม (Event Logs) — READ-ONLY ทั้งหมด
   ใช้ Filter / Group By แทนการแยกหน้าจอ:
     - Harsh Brake / Speeding / Harsh Acceleration / Harsh Corner / Idling / Bump
+
+  แก้ 2026-07-08:
+    ข้อ 1) form/list ปิด create/edit/delete ระดับ view (ควบคู่กับ ACL +
+           create()/write()/unlink() override ในโมเดล — ล็อก 3 ชั้น)
+    ข้อ 3) เพิ่ม Group By: Driver / Vehicle / Event Type ในหน้า list และ search
 -->
 <odoo>
 
-    <!-- ── Event List View ────────────────────────────────────────────── -->
+    <!-- ── Event List View — read-only, เพิ่มคอลัมน์ vehicle/driver/zone ──── -->
     <record id="view_telematics_event_list" model="ir.ui.view">
         <field name="name">fleet.telematics.event.list</field>
         <field name="model">fleet.telematics.event</field>
         <field name="arch" type="xml">
             <list default_order="occurred_at desc"
-                  decoration-danger="event_type=='harsh_brake'"
+                  create="false" delete="false" edit="false"
+                  decoration-danger="event_type=='harsh_brake' or is_over_speed_limit"
                   decoration-warning="event_type=='speeding' or event_type=='bump'"
                   decoration-info="event_type=='idling'">
                 <field name="occurred_at"/>
-                <field name="trip_id"/>
+                <field name="vehicle_id"/>
+                <field name="driver_id"/>
+                <field name="trip_id" optional="show"/>
                 <field name="event_type"    widget="badge"/>
                 <field name="severity"/>
                 <field name="speed_at_event"/>
-                <field name="lat"         optional="show"/>
-                <field name="lon"         optional="show"/>
+                <field name="zone_label"        optional="show"/>
+                <field name="speed_limit_kmh"   optional="show"/>
+                <field name="is_over_speed_limit" optional="show" widget="boolean_toggle" readonly="1"/>
+                <field name="lat"         optional="hide"/>
+                <field name="lon"         optional="hide"/>
                 <field name="description" optional="hide"/>
             </list>
         </field>
     </record>
 
-    <!-- ── Event Form View ────────────────────────────────────────────── -->
+    <!-- ── Event Form View — read-only ทั้งหมด (ดูอย่างเดียว) ──────────────── -->
     <record id="view_telematics_event_form" model="ir.ui.view">
         <field name="name">fleet.telematics.event.form</field>
         <field name="model">fleet.telematics.event</field>
         <field name="arch" type="xml">
-            <form>
+            <form create="false" edit="false" delete="false">
                 <sheet>
+                    <div class="alert alert-info" role="alert">
+                        📡 ข้อมูลนี้ดึงจากบอร์ด GPS อัตโนมัติ และถูกล็อกไม่ให้แก้ไข
+                        เพื่อความโปร่งใสของคะแนนและโบนัสพนักงาน
+                    </div>
                     <group>
                         <group string="Event Details">
                             <field name="event_type"/>
@@ -45,6 +60,15 @@
                         </group>
                         <group string="Trip / Vehicle / Driver">
                             <field name="trip_id"/>
+                            <field name="vehicle_id"/>
+                            <field name="driver_id"/>
+                        </group>
+                    </group>
+                    <group string="Zone-based Speed Limit (ข้อ 2)">
+                        <group>
+                            <field name="zone_label"/>
+                            <field name="speed_limit_kmh"/>
+                            <field name="is_over_speed_limit"/>
                         </group>
                     </group>
                     <group string="GPS Location (พิกัด)">
@@ -58,12 +82,14 @@
         </field>
     </record>
 
-    <!-- ── Search View — Filter แทนการแยกหน้าจอ ──────────────────────── -->
+    <!-- ── Search View — Filter + Group By (ข้อ 3) ────────────────────────── -->
     <record id="view_telematics_event_search" model="ir.ui.view">
         <field name="name">fleet.telematics.event.search</field>
         <field name="model">fleet.telematics.event</field>
         <field name="arch" type="xml">
             <search>
+                <field name="vehicle_id"/>
+                <field name="driver_id"/>
                 <field name="trip_id"/>
                 <field name="event_type"/>
                 <!-- Filter แต่ละชนิดพฤติกรรม — ใช้แทนการแยกหน้าจอ -->
@@ -76,11 +102,18 @@
                 <separator/>
                 <filter name="high_severity" string="Severity &gt; 70"
                         domain="[('severity','&gt;',70)]"/>
+                <filter name="over_speed_limit" string="เกินความเร็วตามโซน"
+                        domain="[('is_over_speed_limit','=',True)]"/>
                 <filter name="today" string="Today"
                         domain="[('occurred_at','&gt;=', context_today().strftime('%Y-%m-%d 00:00:00'))]"/>
                 <group>
+                    <!-- ข้อ 3: Group By ตามที่ผู้ตรวจงานต้องการ -->
+                    <filter name="group_driver"     string="Driver"     context="{'group_by': 'driver_id'}"/>
                     <filter name="group_event_type" string="Event Type" context="{'group_by': 'event_type'}"/>
+                    <filter name="group_vehicle"    string="Vehicle"    context="{'group_by': 'vehicle_id'}"/>
+                    <separator orientation="vertical"/>
                     <filter name="group_trip"       string="Trip"       context="{'group_by': 'trip_id'}"/>
+                    <filter name="group_zone"       string="Zone"       context="{'group_by': 'zone_label'}"/>
                     <filter name="group_day"        string="Day"        context="{'group_by': 'occurred_at:day'}"/>
                 </group>
             </search>
@@ -99,12 +132,13 @@
         </field>
     </record>
 
-    <!-- ── Action ─────────────────────────────────────────────────────── -->
+    <!-- ── Action — ปิด create ระดับ action ด้วย (ชั้นป้องกันซ้ำ) ─────────── -->
     <record id="action_telematics_event" model="ir.actions.act_window">
         <field name="name">Event Logs</field>
         <field name="res_model">fleet.telematics.event</field>
         <field name="view_mode">list,form,graph</field>
         <field name="search_view_id" ref="view_telematics_event_search"/>
+        <field name="context">{'group_by': ['vehicle_id']}</field>
     </record>
 
 </odoo>

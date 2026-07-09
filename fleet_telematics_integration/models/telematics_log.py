@@ -108,6 +108,12 @@ class TelematicsLog(models.Model):
         ('failed',    'Failed'),
     ], string='Sync Status', default='draft')
 
+    # เพิ่ม 2026-07-08: กัน trip เดิมถูกยิง GET /trips/{id} ซ้ำทุกรอบ cron
+    # เพื่อดึง harsh events — ดึงครั้งเดียวตอนสร้าง trip ใหม่ก็พอ
+    events_synced = fields.Boolean(
+        string='Events Synced', default=False, readonly=True,
+        help='True แล้วเมื่อดึง Harsh Events ของ trip นี้จาก Backend มาเก็บครบแล้ว')
+
     event_ids = fields.One2many(
         'fleet.telematics.event', 'trip_id', string='Harsh Events')
 
@@ -207,9 +213,20 @@ class TelematicsLog(models.Model):
                         [('external_trip_id', '=', str(ext_id))], limit=1)
                     if existing:
                         existing.write(vals)
+                        trip_rec = existing
                     else:
-                        self.create(vals)
+                        trip_rec = self.create(vals)
                     synced_ids.append(int(ext_id))
+                    # ── ข้อ 1 (Event Logs): ดึง Harsh Event ของ trip นี้จาก
+                    # Backend มาเก็บอัตโนมัติ — ทำครั้งเดียวต่อ trip (กันยิง
+                    # API ซ้ำทุกรอบ cron) ห่อ try/except ไม่ให้พัง flow หลัก
+                    if not trip_rec.events_synced:
+                        try:
+                            self._sync_trip_events(trip_rec, api_url, api_key)
+                        except Exception as e:
+                            _logger.warning(
+                                '_cron_sync_trips: ดึง events ของ trip %s ไม่สำเร็จ: %s',
+                                ext_id, e)
                     # ── FDD §12.5 ขั้นตอนที่ 11-12 ────────────────────────────
                     # 11. อัปเดต odometer ของรถจาก distance_km สะสม
                     # 12. ตรวจสอบ maintenance threshold → สร้าง service record
@@ -500,6 +517,88 @@ class TelematicsLog(models.Model):
             'state':                 'synced',
         }
 
+
+    # ============================================================
+    # [O2] _sync_trip_events — GET /api/v1/trips/{trip_id} → ดึง events[]
+    #
+    # เพิ่ม 2026-07-08 (Event Logs ต้อง auto-sync จากบอร์ด GPS ตามที่
+    # ผู้ตรวจงานสั่ง — เดิมโมเดล fleet.telematics.event มีอยู่แต่ไม่เคยมี
+    # โค้ดส่วนไหนดึงข้อมูลเข้ามาเก็บเลย มีแต่ปุ่มสร้าง record มือใน UI
+    # ซึ่งเป็นช่องโหว่ตรงข้ามกับ "ห้ามแก้ไข/สร้างเอง" ที่ต้องการ)
+    #
+    # ⚠️ FDD ระบุแค่ endpoint (GET /trips/{id} คืน "trip + GPS track array
+    # + events") แต่ไม่ได้ระบุ schema ของแต่ละ event ในนั้นชัดเจน — โค้ดนี้
+    # เขียนแบบ defensive เผื่อ key หลายแบบที่เป็นไปได้ (ตาม field ที่ใช้จริง
+    # ใน MQTT payload อ้างอิง §10.3: event/event_severity/ts/lat/lon) ต้อง
+    # ให้ทีม Backend ยืนยัน schema จริงของ endpoint นี้อีกครั้งก่อนใช้ production
+    # ============================================================
+    def _sync_trip_events(self, trip_rec, api_url, api_key):
+        if not trip_rec.external_trip_id:
+            return
+
+        resp = requests.get(
+            f'{api_url}/api/v1/trips/{trip_rec.external_trip_id}',
+            headers={'APIKEY': api_key} if api_key else {},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        raw_events = (
+            data.get('events') or data.get('event_list')
+            or data.get('harsh_events') or []
+        )
+        if not raw_events:
+            trip_rec.write({'events_synced': True})
+            return
+
+        EventModel = self.env['fleet.telematics.event']
+        vals_list = []
+        for ev in raw_events:
+            occurred_at = self._parse_trip_dt(
+                ev.get('occurred_at') or ev.get('ts') or ev.get('timestamp'))
+            event_type = ev.get('event_type') or ev.get('event') or ev.get('type')
+            if not occurred_at or not event_type:
+                _logger.warning(
+                    '_sync_trip_events: ข้าม event ที่ไม่มี occurred_at/event_type '
+                    '(trip=%s, raw=%s)', trip_rec.external_trip_id, ev)
+                continue
+
+            # กันสร้างซ้ำ — เทียบ trip_id + event_type + occurred_at
+            dup = EventModel.sudo().search([
+                ('trip_id', '=', trip_rec.id),
+                ('event_type', '=', event_type),
+                ('occurred_at', '=', occurred_at),
+            ], limit=1)
+            if dup:
+                continue
+
+            severity = ev.get('severity')
+            if severity is None:
+                severity = ev.get('event_severity')
+            # normalize: ถ้า Backend ส่งเป็นสัดส่วน 0-1 (เช่น 0.82) แปลงเป็น 0-100
+            if isinstance(severity, (int, float)) and 0 <= severity <= 1:
+                severity = severity * 100
+
+            vals_list.append({
+                'trip_id':        trip_rec.id,
+                'event_type':     event_type,
+                'occurred_at':    occurred_at,
+                'lat':            ev.get('lat', 0.0) or 0.0,
+                'lon':            ev.get('lon', 0.0) or 0.0,
+                'severity':       severity or 0.0,
+                'speed_at_event': ev.get('speed', ev.get('speed_at_event', 0.0)) or 0.0,
+                'description':    ev.get('description') or '',
+            })
+
+        if vals_list:
+            # with_context flag พิเศษ — เดียวที่ผ่าน create() override ของ
+            # fleet.telematics.event ได้ (ดู models/telematics_event.py [D])
+            EventModel.sudo().with_context(
+                fleet_telematics_allow_sync=True
+            ).create(vals_list)
+
+        trip_rec.write({'events_synced': True})
 
     # ============================================================
     # [O] action_load_trip_detail — GET /api/v1/trips/{trip_id}

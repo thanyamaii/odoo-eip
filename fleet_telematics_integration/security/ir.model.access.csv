@@ -2,8 +2,8 @@ id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
 access_fleet_telematics_config_manager,fleet.telematics.config manager,model_fleet_telematics_config,fleet.fleet_group_manager,1,1,1,1
 access_fleet_telematics_log_user,fleet.telematics.log user,model_fleet_telematics_log,fleet.fleet_group_user,1,1,1,0
 access_fleet_telematics_log_manager,fleet.telematics.log manager,model_fleet_telematics_log,fleet.fleet_group_manager,1,1,1,1
-access_fleet_telematics_event_user,fleet.telematics.event user,model_fleet_telematics_event,fleet.fleet_group_user,1,1,1,0
-access_fleet_telematics_event_manager,fleet.telematics.event manager,model_fleet_telematics_event,fleet.fleet_group_manager,1,1,1,1
+access_fleet_telematics_event_user,fleet.telematics.event user,model_fleet_telematics_event,fleet.fleet_group_user,1,0,0,0
+access_fleet_telematics_event_manager,fleet.telematics.event manager,model_fleet_telematics_event,fleet.fleet_group_manager,1,0,0,0
 access_fleet_telematics_scoring_user,fleet.telematics.scoring.config user,model_fleet_telematics_scoring_config,fleet.fleet_group_user,1,0,0,0
 access_fleet_telematics_scoring_manager,fleet.telematics.scoring.config manager,model_fleet_telematics_scoring_config,fleet.fleet_group_manager,1,1,1,1
 access_fleet_telematics_incentive_user,fleet.telematics.incentive user,model_fleet_telematics_incentive,fleet.fleet_group_user,1,0,0,0

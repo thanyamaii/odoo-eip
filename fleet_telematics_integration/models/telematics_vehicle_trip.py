@@ -24,21 +24,29 @@ class TelematicsVehicleTripHistory(models.TransientModel):
     _description = 'Vehicle Trip History (ดึงจาก Backend โดยตรง)'
 
     # ── Filter fields ──────────────────────────────────────────────────────────
-    vehicle_id = fields.Integer(
-        string='Vehicle ID', required=True,
-        help='พิมพ์รหัสรถตรงๆ เช่น 1, 43')
-    vehicle_name = fields.Char(
-        string='ชื่อรถ', readonly=True,
-        compute='_compute_vehicle_name', store=False)
+    # เดิม: vehicle_id เป็น Integer ให้พิมพ์เลข ID หลังบ้านตรงๆ (ผู้ใช้ทั่วไปไม่รู้เลข ID)
+    # แก้: เปลี่ยนเป็น Many2one → ผู้ใช้ค้นหา/เลือกได้จากชื่อรุ่นรถ, ทะเบียนรถ
+    #      หรือชื่อคนขับ (name_search ของ fleet.vehicle รองรับค้นด้วย license_plate
+    #      และ driver_id.name อยู่แล้วเป็นค่า default ของ core Odoo)
+    #      หมายเหตุ: Backend ใช้ Odoo record id ของ fleet.vehicle เป็น vehicle_id
+    #      โดยตรงอยู่แล้ว (ดู models/telematics_log.py) จึงใช้ .id ส่งต่อได้เลย
+    vehicle_id = fields.Many2one(
+        'fleet.vehicle',
+        string='รถ',
+        required=True,
+        help='ค้นหาและเลือกรถจาก ชื่อรุ่นรถ / ทะเบียนรถ / ชื่อพนักงานขับรถ',
+    )
+    # ฟิลด์ readonly ไว้ยืนยันข้อมูลรถที่เลือก (แสดงควบคู่กับ vehicle_id)
+    vehicle_license_plate = fields.Char(
+        string='ทะเบียนรถ', related='vehicle_id.license_plate', readonly=True)
+    driver_id = fields.Many2one(
+        'res.partner', string='คนขับปัจจุบัน',
+        related='vehicle_id.driver_id', readonly=True)
+    telematics_device_id = fields.Char(
+        string='GPS Device ที่ผูกไว้',
+        related='vehicle_id.telematics_device_id', readonly=True,
+        help='อ้างอิงบอร์ด GPS ที่ผูกกับรถคันนี้ — Backend จะใช้บอร์ดนี้ดึงทริปให้')
 
-    @api.depends('vehicle_id')
-    def _compute_vehicle_name(self):
-        for rec in self:
-            if rec.vehicle_id:
-                v = self.env['fleet.vehicle'].sudo().browse(rec.vehicle_id)
-                rec.vehicle_name = v.display_name if v.exists() else f'Vehicle {rec.vehicle_id}'
-            else:
-                rec.vehicle_name = ''
     date_from = fields.Date(string='ตั้งแต่วันที่')
     date_to   = fields.Date(string='ถึงวันที่')
     synced_only = fields.Boolean(
@@ -63,12 +71,21 @@ class TelematicsVehicleTripHistory(models.TransientModel):
     def action_fetch(self):
         self.ensure_one()
         if not self.vehicle_id:
-            raise UserError('กรุณากรอก Vehicle ID ก่อน')
+            raise UserError('กรุณาเลือกรถก่อน (ค้นหาจากชื่อรถ/ทะเบียน/คนขับ)')
+
+        # ── ข้อ 3: ตรวจสอบว่ารถคันนี้ผูก GPS Device ไว้แล้วหรือยัง ──────────────
+        # เพราะ Backend อ้างอิงทริปตามบอร์ด GPS ที่ผูกกับรถ ถ้ายังไม่ลงทะเบียน
+        # device จะดึงทริปไม่ได้เลย (หรือได้ผลลัพธ์ว่าง) — เตือนผู้ใช้ก่อนยิง API
+        if not self.vehicle_id.telematics_device_id:
+            raise UserError(
+                f'รถ "{self.vehicle_id.display_name}" ยังไม่ได้ผูก GPS Device — '
+                'กรุณาลงทะเบียน Device ที่หน้ารถ (ปุ่ม Register Device) ก่อนดึงประวัติ'
+            )
 
         # ถ้ายังไม่มี id ให้ save ก่อน
         if not self.id:
             self = self.create({
-                'vehicle_id':  self.vehicle_id,
+                'vehicle_id':  self.vehicle_id.id,
                 'date_from':   self.date_from,
                 'date_to':     self.date_to,
                 'synced_only': self.synced_only,
@@ -91,7 +108,7 @@ class TelematicsVehicleTripHistory(models.TransientModel):
 
         try:
             resp = requests.get(
-                f'{api_url}/api/v1/vehicles/{self.vehicle_id}/trips',
+                f'{api_url}/api/v1/vehicles/{self.vehicle_id.id}/trips',
                 headers={'APIKEY': api_key},
                 params=params,
                 timeout=15,
@@ -123,51 +140,6 @@ class TelematicsVehicleTripHistory(models.TransientModel):
             'target':    'current',
         }
 
-        api_url, api_key = self._api()
-
-        params = {
-            'page':  self.page,
-            'limit': min(self.limit, 200),
-        }
-        if self.date_from:
-            params['date_from'] = self.date_from.strftime('%Y-%m-%dT00:00:00')
-        if self.date_to:
-            params['date_to'] = self.date_to.strftime('%Y-%m-%dT23:59:59')
-        if self.synced_only:
-            params['synced_only'] = 'true'
-
-        try:
-            resp = requests.get(
-                f'{api_url}/api/v1/vehicles/{self.vehicle_id}/trips',
-                headers={'APIKEY': api_key},
-                params=params,
-                timeout=15,
-            )
-        except requests.RequestException as e:
-            raise UserError(f'เชื่อมต่อ Backend ไม่สำเร็จ: {e}')
-
-        if resp.status_code != 200:
-            raise UserError(f'Backend ตอบ (HTTP {resp.status_code}): {resp.text[:300]}')
-
-        data        = resp.json()
-        trips       = data.get('trips', []) if isinstance(data, dict) else data
-        total       = data.get('total', len(trips)) if isinstance(data, dict) else len(trips)
-        total_pages = data.get('total_pages', 1) if isinstance(data, dict) else 1
-
-        self.write({
-            'total_trips':  total,
-            'total_pages':  total_pages,
-            'has_result':   True,
-            'result_html':  self._render_trips(trips, total, total_pages),
-        })
-        return {
-            'type':      'ir.actions.act_window',
-            'res_model': self._name,
-            'res_id':    self.id,
-            'view_mode': 'form',
-            'target':    'new',
-        }
-
     def action_prev_page(self):
         self.ensure_one()
         if self.page > 1:
@@ -184,7 +156,7 @@ class TelematicsVehicleTripHistory(models.TransientModel):
         """Export trip data to Excel — ดาวน์โหลดรายงานพฤติกรรมการขับขี่"""
         self.ensure_one()
         if not self.vehicle_id:
-            raise UserError('กรุณากรอก Vehicle ID ก่อน')
+            raise UserError('กรุณาเลือกรถก่อน')
 
         api_url, api_key = self._api()
 
@@ -199,7 +171,7 @@ class TelematicsVehicleTripHistory(models.TransientModel):
 
         try:
             resp = requests.get(
-                f'{api_url}/api/v1/vehicles/{self.vehicle_id}/trips',
+                f'{api_url}/api/v1/vehicles/{self.vehicle_id.id}/trips',
                 headers={'APIKEY': api_key},
                 params=params,
                 timeout=15,
@@ -251,7 +223,7 @@ class TelematicsVehicleTripHistory(models.TransientModel):
 
             # Title
             ws.merge_range('A1:J1',
-                f'รายงานประวัติการเดินทาง — {self.vehicle_name}', title_fmt)
+                f'รายงานประวัติการเดินทาง — {self.vehicle_id.display_name}', title_fmt)
             period = ''
             if self.date_from:
                 period += f'ตั้งแต่ {self.date_from} '
@@ -334,7 +306,7 @@ class TelematicsVehicleTripHistory(models.TransientModel):
 
         # สร้าง ir.attachment แล้ว return download
         filename = (
-            f"vehicle_trip_{self.vehicle_id}"
+            f"vehicle_trip_{self.vehicle_id.license_plate or self.vehicle_id.id}"
             f"{'_' + str(self.date_from) if self.date_from else ''}"
             f"{'_' + str(self.date_to) if self.date_to else ''}.{ext}"
         )
@@ -381,7 +353,8 @@ class TelematicsVehicleTripHistory(models.TransientModel):
         <div>
             <p class="text-muted small mb-2">
                 พบ <b>{total}</b> ทริป | หน้า {self.page}/{total_pages}
-                | รถ: <b>{self.vehicle_name}</b>
+                | รถ: <b>{self.vehicle_id.display_name}</b>
+                {f" | ทะเบียน: <b>{self.vehicle_id.license_plate}</b>" if self.vehicle_id.license_plate else ""}
             </p>
             <table class="table table-bordered table-sm table-hover" style="font-size:13px">
                 <thead class="table-dark">

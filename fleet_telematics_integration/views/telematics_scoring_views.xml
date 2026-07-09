@@ -21,6 +21,7 @@
                 <field name="tier_c_min_score"/>
                 <field name="last_push_at"/>
                 <field name="last_push_status"/>
+                <field name="approved_by_id" optional="show"/>
                 <field name="active" widget="boolean_toggle"/>
             </list>
         </field>
@@ -33,27 +34,44 @@
         <field name="arch" type="xml">
             <form>
                 <header>
-                    <!-- ปุ่ม Push Config → POST /api/v1/config/scoring -->
+                    <!-- ปุ่ม Approve → เฉพาะ Fleet Manager, แสดงเฉพาะตอน "Saved"
+                         (มี id แล้ว) และยังไม่เคย approve และยังไม่ Active -->
+                    <button name="action_approve"
+                            string="✅ Approve"
+                            type="object"
+                            class="btn-primary"
+                            groups="fleet.fleet_group_manager"
+                            invisible="not id or approved_by_id or active"
+                            confirm="ยืนยันอนุมัติเกณฑ์คะแนนชุดนี้? หลังอนุมัติจะ Push ไป Backend ได้"/>
+                    <!-- ปุ่ม Push Config → แสดงเฉพาะตอน Approved แล้วและยังไม่ Active
+                         (ตอน Active=False Push ซ้ำได้เรื่อยๆ ตามบรีฟ) -->
                     <button name="action_push_to_backend"
                             string="💾 Push Config"
                             type="object"
                             class="btn-primary"
+                            invisible="not approved_by_id or active"
                             confirm="ยืนยันส่ง Scoring Config นี้ไปให้ backend ประมวลผลทันที?"/>
-                    <!-- ปุ่ม Test Connection → GET / -->
+                    <!-- ปุ่ม Test Connection → แสดงเสมอทุก state -->
                     <button name="action_test_connection"
                             string="⚡ Test Connection"
                             type="object"
                             class="btn-secondary"/>
-                    <!-- ปุ่ม ดึง Config ปัจจุบัน → GET /api/v1/config/scoring/current -->
+                    <!-- ปุ่ม ดึง Config ปัจจุบัน → ซ่อนเฉพาะตอนยังไม่ save (New) -->
                     <button name="action_fetch_current_config"
                             string="🔄 ดึง Config ปัจจุบัน"
                             type="object"
-                            class="btn-secondary"/>
+                            class="btn-secondary"
+                            invisible="not id"/>
                 </header>
                 <sheet>
                     <!-- Ribbon "Active" แสดงตรงมุมบนขวาเมื่อ active=True -->
                     <widget name="web_ribbon" title="Active" bg_color="bg-success"
                             invisible="not active"/>
+
+                    <div class="alert alert-warning" role="alert" invisible="not is_locked">
+                        🔒 Config นี้ Active อยู่ — แก้ไขเกณฑ์คะแนนไม่ได้
+                        ปิด Active ก่อนถ้าต้องการแก้ไข
+                    </div>
 
                     <!-- System Health Dashboard (ย้ายขึ้นบนสุด) -->
                     <group string="🔌 System Health">
@@ -61,18 +79,22 @@
                             <field name="last_push_at"     readonly="1" string="Last Pushed At"/>
                             <field name="last_push_status" readonly="1" string="Push Status"/>
                         </group>
+                        <group>
+                            <field name="approved_by_id" readonly="1" string="ผู้อนุมัติ"/>
+                            <field name="approved_at"    readonly="1" string="วันที่อนุมัติ"/>
+                        </group>
                     </group>
 
                     <!-- ข้อมูลทั่วไป -->
                     <group string="ข้อมูลทั่วไป">
                         <group>
-                            <field name="name"/>
-                            <field name="effective_date"/>
+                            <field name="name" readonly="is_locked"/>
+                            <field name="effective_date" readonly="is_locked"/>
                             <field name="active"/>
                         </group>
                         <group>
-                            <field name="score_base"/>
-                            <field name="max_deduct_per_trip"/>
+                            <field name="score_base" readonly="is_locked"/>
+                            <field name="max_deduct_per_trip" readonly="is_locked"/>
                         </group>
                     </group>
 
@@ -81,13 +103,16 @@
                         <page string="Detection Thresholds" name="thresholds">
                             <group>
                                 <group string="G-Force (ค่าแรง G ที่ถือว่าผิดปกติ)">
-                                    <field name="harsh_brake_g"/>
-                                    <field name="harsh_accel_g"/>
-                                    <field name="harsh_corner_g"/>
+                                    <field name="harsh_brake_g" readonly="is_locked"/>
+                                    <field name="harsh_accel_g" readonly="is_locked"/>
+                                    <field name="harsh_corner_g" readonly="is_locked"/>
                                 </group>
                                 <group string="Speed &amp; Idle">
-                                    <field name="speeding_kmh_over"/>
-                                    <field name="idle_min_threshold"/>
+                                    <field name="speeding_kmh_over" readonly="is_locked"/>
+                                    <field name="idle_min_threshold" readonly="is_locked"/>
+                                    <!-- เพิ่ม 2026-07-08: กฎความเร็วแยกโซน (บรีฟข้อ 2) -->
+                                    <field name="speed_limit_bkk" readonly="is_locked"/>
+                                    <field name="speed_limit_upcountry" readonly="is_locked"/>
                                 </group>
                             </group>
                         </page>
@@ -95,12 +120,12 @@
                         <!-- Tab 2: Deduction Weights -->
                         <page string="Deduction Weights" name="weights">
                             <group>
-                                <field name="harsh_brake_deduct"/>
-                                <field name="harsh_accel_deduct"/>
-                                <field name="harsh_corner_deduct"/>
-                                <field name="speeding_deduct"/>
-                                <field name="idling_deduct"/>
-                                <field name="bump_deduct"/>
+                                <field name="harsh_brake_deduct" readonly="is_locked"/>
+                                <field name="harsh_accel_deduct" readonly="is_locked"/>
+                                <field name="harsh_corner_deduct" readonly="is_locked"/>
+                                <field name="speeding_deduct" readonly="is_locked"/>
+                                <field name="idling_deduct" readonly="is_locked"/>
+                                <field name="bump_deduct" readonly="is_locked"/>
                             </group>
                         </page>
 
@@ -108,18 +133,18 @@
                         <page string="Incentive Tiers" name="tiers">
                             <group>
                                 <group string="Tier A — Excellent">
-                                    <field name="tier_a_min_score"/>
-                                    <field name="tier_a_bonus_pct"/>
+                                    <field name="tier_a_min_score" readonly="is_locked"/>
+                                    <field name="tier_a_bonus_pct" readonly="is_locked"/>
                                 </group>
                                 <group string="Tier B — Good">
-                                    <field name="tier_b_min_score"/>
-                                    <field name="tier_b_bonus_pct"/>
+                                    <field name="tier_b_min_score" readonly="is_locked"/>
+                                    <field name="tier_b_bonus_pct" readonly="is_locked"/>
                                 </group>
                             </group>
                             <group>
                                 <group string="Tier C — Fair">
-                                    <field name="tier_c_min_score"/>
-                                    <field name="tier_c_bonus_pct"/>
+                                    <field name="tier_c_min_score" readonly="is_locked"/>
+                                    <field name="tier_c_bonus_pct" readonly="is_locked"/>
                                 </group>
                                 <group string="Tier D — Needs Improvement">
                                     <span class="text-muted fst-italic">
