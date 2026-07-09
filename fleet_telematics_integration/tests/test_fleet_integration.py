@@ -8,10 +8,10 @@
 # ==============================================================================
 
 from unittest.mock import patch, MagicMock
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, date, timezone, timedelta
 
 from odoo.tests.common import TransactionCase
-from odoo.exceptions import ValidationError
+from odoo.exceptions import ValidationError, UserError
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -41,6 +41,12 @@ class FleetTelematicsBase(TransactionCase):
         ICP = cls.env['ir.config_parameter'].sudo()
         ICP.set_param('fleet_telematics.mtd_api_url', 'http://test-backend:8001')
         ICP.set_param('fleet_telematics.mtd_api_key', 'TEST-KEY')
+
+        # เพิ่ม 2026-07-08: ต้องอยู่กลุ่ม Fleet Manager เพื่อทดสอบ action_approve()
+        # ของ fleet.telematics.scoring.config (ดู TestUC02ScoringConfig)
+        cls.env.user.write({
+            'groups_id': [(4, cls.env.ref('fleet.fleet_group_manager').id)]
+        })
 
     def _make_vehicle(self, plate, device=None):
         vals = {
@@ -298,6 +304,109 @@ class TestUC02ScoringConfig(FleetTelematicsBase):
         self.assertTrue(c2.active)
         self.assertFalse(c1.active)
 
+    # ── เพิ่ม 2026-07-08: ทดสอบกฎความเร็วแยกโซน (บรีฟข้อ 2) ────────────────
+    def test_10_speed_limit_zone_defaults(self):
+        """ค่าเริ่มต้น speed_limit_bkk=80, speed_limit_upcountry=90"""
+        cfg = self._make_scoring('UC02-10', active=False)
+        self.assertEqual(cfg.speed_limit_bkk, 80.0)
+        self.assertEqual(cfg.speed_limit_upcountry, 90.0)
+
+    def test_11_speed_limit_bkk_higher_than_upcountry_raises(self):
+        """กรุงเทพฯ จำกัดสูงกว่านอกเมือง → ต้อง ValidationError (ผิดตรรกะ)"""
+        with self.assertRaises(ValidationError):
+            self._make_scoring('UC02-11', active=False,
+                                speed_limit_bkk=100.0,
+                                speed_limit_upcountry=90.0)
+
+    def test_12_speed_limit_zero_raises(self):
+        """speed_limit_bkk/upcountry = 0 → ValidationError"""
+        with self.assertRaises(ValidationError):
+            self._make_scoring('UC02-12', active=False, speed_limit_bkk=0.0)
+
+    def test_13_payload_includes_speed_limit_zone_keys(self):
+        """_build_config_payload() ต้องมี speed_limit_bkk/upcountry"""
+        cfg     = self._make_scoring('UC02-13')
+        payload = cfg._build_config_payload()
+        self.assertIn('speed_limit_bkk', payload)
+        self.assertIn('speed_limit_upcountry', payload)
+        self.assertEqual(payload['speed_limit_bkk'], 80.0)
+        self.assertEqual(payload['speed_limit_upcountry'], 90.0)
+
+    # ── เพิ่ม 2026-07-08: ทดสอบ Read-only lock เมื่อ Active/Push แล้ว (ข้อ 3) ──
+    def test_14_edit_locked_when_active_raises(self):
+        """แก้ไข field เกณฑ์คะแนนตอน active=True → ต้อง UserError"""
+        cfg = self._make_scoring('UC02-14', active=True)
+        with self.assertRaises(UserError):
+            cfg.write({'score_base': 50.0})
+
+    def test_15_edit_allowed_after_deactivate(self):
+        """ปิด active ก่อน แล้วแก้ไข field เกณฑ์คะแนน → ต้องสำเร็จ"""
+        cfg = self._make_scoring('UC02-15', active=True)
+        cfg.write({'active': False})
+        cfg.write({'score_base': 88.0})
+        self.assertEqual(cfg.score_base, 88.0)
+
+    def test_16_edit_allowed_after_push_while_inactive(self):
+        """แก้ 2026-07-09 ตามบรีฟใหม่: เคย Push แล้ว (last_push_at มีค่า) แต่
+        active=False → ต้องยังแก้ไข/Push ซ้ำได้เรื่อยๆ (ไม่ล็อกถาวรแล้ว)"""
+        cfg = self._make_scoring('UC02-16', active=False)
+        cfg.write({'last_push_at': '2026-07-08 10:00:00'})
+        cfg.write({'harsh_brake_deduct': 1.0})   # ต้องไม่ raise
+        self.assertEqual(cfg.harsh_brake_deduct, 1.0)
+
+    def test_17_is_locked_compute(self):
+        """is_locked = True เมื่อ active=True เท่านั้น (ไม่ผูกกับ last_push_at แล้ว)"""
+        cfg = self._make_scoring('UC02-17', active=False)
+        self.assertFalse(cfg.is_locked)
+        cfg.write({'last_push_at': '2026-07-08 10:00:00'})
+        self.assertFalse(cfg.is_locked)   # เคย push แต่ inactive → ไม่ล็อก
+        cfg.write({'active': True})
+        self.assertTrue(cfg.is_locked)
+
+    def test_17b_active_default_false_on_new_record(self):
+        """สร้าง record ใหม่โดยไม่ระบุ active → ต้องเป็น False (ไม่ล็อกฟอร์มตอนสร้าง)"""
+        cfg = self.env['fleet.telematics.scoring.config'].create({
+            'name': 'UC02-17B', 'effective_date': '2025-01-01',
+            'score_base': 100.0, 'max_deduct_per_trip': 50.0,
+            'harsh_brake_deduct': 5.0, 'harsh_accel_deduct': 3.0,
+            'harsh_corner_deduct': 3.0, 'speeding_deduct': 10.0,
+            'idling_deduct': 2.0, 'bump_deduct': 4.0,
+            'harsh_brake_g': 0.40, 'harsh_accel_g': 0.40, 'harsh_corner_g': 0.40,
+            'speeding_kmh_over': 20.0, 'idle_min_threshold': 5.0,
+            'tier_a_min_score': 90.0, 'tier_a_bonus_pct': 10.0,
+            'tier_b_min_score': 75.0, 'tier_b_bonus_pct': 5.0,
+            'tier_c_min_score': 60.0, 'tier_c_bonus_pct': 0.0,
+        })
+        self.assertFalse(cfg.active)
+        self.assertFalse(cfg.is_locked)
+
+    # ── เพิ่ม 2026-07-08: ทดสอบ Approval workflow (บรีฟ "กำหนดผู้อนุมัติ") ──
+    def test_18_push_without_approval_raises(self):
+        """Push Config โดยยังไม่มี approved_by_id → ต้อง UserError ก่อนยิง API เลย"""
+        cfg = self._make_scoring('UC02-18', active=False)
+        with self.assertRaises(UserError):
+            cfg.action_push_to_backend()
+
+    def test_19_approve_sets_approved_by_and_at(self):
+        """action_approve() ต้องตั้ง approved_by_id/approved_at (ในฐานะ Fleet Manager)"""
+        cfg = self._make_scoring('UC02-19', active=False)
+        cfg.action_approve()
+        self.assertTrue(cfg.approved_by_id)
+        self.assertTrue(cfg.approved_at)
+
+    def test_20_push_after_approval_succeeds(self):
+        """Approve แล้ว Push ต้องผ่านจุดเช็ค approval ไปถึงขั้นยิง API"""
+        cfg = self._make_scoring('UC02-20', active=False)
+        cfg.action_approve()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {'config': {'config_name': cfg.name}}
+        mock_resp.raise_for_status.return_value = None
+        with patch('requests.post', return_value=mock_resp):
+            cfg.action_push_to_backend()
+        self.assertTrue(cfg.last_push_at)
+        self.assertIn('OK', cfg.last_push_status)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # UC-04 — GPS Poll + Dedup + Batch  (telematics_log.py section [I]–[N])
@@ -508,12 +617,12 @@ class TestUC10IncentiveAuditLog(FleetTelematicsBase):
     def _make_incentive(self, **kw):
         vals = dict(
             driver_id=self.employee.id,
-            period_month=6, period_year=2026,
+            date_from=date(2026, 6, 1), date_to=date(2026, 6, 30),
             avg_score=88.0, min_score=70.0,
             total_trips=20, total_distance_km=500.0,
             total_harsh_events=3, total_idle_min=40.0,
             incentive_tier='B', bonus_pct=5.0,
-            base_salary=20000.0, bonus_amount=1000.0,
+            base_salary=20000.0,
         )
         vals.update(kw)
         return self.env['fleet.telematics.incentive'].create(vals)
@@ -588,6 +697,77 @@ class TestUC10IncentiveAuditLog(FleetTelematicsBase):
         inc.write({'state': 'confirmed'})
         # mail.thread tracking สร้าง message แยกจาก manual message_post ใน action_confirm
         self.assertGreaterEqual(len(inc.message_ids), n_before)
+
+    # ── เพิ่ม 2026-07-09: ทดสอบ date_from/date_to แทน period_month/year ────
+    def test_08_period_label_shows_date_range(self):
+        """period_label ต้องแสดงเป็นช่วงวันที่ ไม่ใช่ MM/YYYY แบบเดิม"""
+        inc = self._make_incentive(
+            date_from=date(2026, 6, 26), date_to=date(2026, 7, 25))
+        self.assertEqual(inc.period_label, '26/06/2026 - 25/07/2026')
+
+    def test_09_period_month_year_derived_from_date_from(self):
+        """period_month/period_year ต้อง derive จาก date_from อัตโนมัติ"""
+        inc = self._make_incentive(
+            date_from=date(2026, 7, 26), date_to=date(2026, 8, 25))
+        self.assertEqual(inc.period_month, 7)
+        self.assertEqual(inc.period_year, 2026)
+
+    def test_10_date_from_required(self):
+        """date_from/date_to เป็น required — สร้างโดยไม่ระบุต้อง raise"""
+        with self.assertRaises(Exception):
+            self.env['fleet.telematics.incentive'].create({
+                'driver_id': self.employee.id,
+            })
+
+    def test_11_duplicate_same_date_range_raises(self):
+        """สร้างซ้ำ driver+date_from+date_to เดิม → ต้อง raise (unique constraint)"""
+        self._make_incentive(date_from=date(2026, 5, 1), date_to=date(2026, 5, 31))
+        with self.assertRaises(Exception):
+            self._make_incentive(date_from=date(2026, 5, 1), date_to=date(2026, 5, 31))
+
+    # ── เพิ่ม 2026-07-09: ทดสอบ bonus_amount เป็น compute field จริง ───────
+    def test_12_bonus_amount_computed_from_formula(self):
+        """bonus_amount ต้อง = base_salary * bonus_pct / 100 เสมอ (คำนวณเอง)"""
+        inc = self._make_incentive(base_salary=30000.0, bonus_pct=10.0)
+        self.assertEqual(inc.bonus_amount, 3000.0)
+
+    def test_13_bonus_amount_updates_when_pct_changes(self):
+        """แก้ bonus_pct ตอน draft → bonus_amount ต้อง recompute ตาม"""
+        inc = self._make_incentive(base_salary=20000.0, bonus_pct=5.0)
+        self.assertEqual(inc.bonus_amount, 1000.0)
+        inc.write({'bonus_pct': 10.0})
+        self.assertEqual(inc.bonus_amount, 2000.0)
+
+    # ── เพิ่ม 2026-07-09: ทดสอบล็อกฟอร์มถาวรเมื่อพ้น Draft (บรีฟข้อ 5) ──────
+    def test_14_edit_blocked_after_confirm(self):
+        """แก้ไข field ผลงาน/โบนัส หลัง Confirm ไปแล้ว → ต้อง UserError"""
+        inc = self._make_incentive()
+        inc.write({'state': 'confirmed'})
+        with self.assertRaises(UserError):
+            inc.write({'avg_score': 99.0})
+
+    def test_15_edit_allowed_after_reset_to_draft(self):
+        """Reset กลับ Draft แล้วต้องแก้ไขได้อีกครั้ง"""
+        inc = self._make_incentive()
+        inc.write({'state': 'confirmed'})
+        inc.write({'state': 'draft'})
+        inc.write({'avg_score': 95.0})  # ต้องไม่ raise
+        self.assertEqual(inc.avg_score, 95.0)
+
+    def test_16_export_to_appraisal_requires_approved(self):
+        """action_export_to_appraisal() ก่อนถึง Approved → ต้อง UserError"""
+        inc = self._make_incentive()
+        with self.assertRaises(UserError):
+            inc.action_export_to_appraisal()
+
+    def test_17_export_to_appraisal_posts_to_employee(self):
+        """หลัง Approve แล้ว export ต้องสำเร็จและ post message ไปที่ hr.employee"""
+        inc = self._make_incentive()
+        inc.write({'state': 'confirmed'})
+        inc.write({'state': 'approved', 'approved_by': self.env.user.id})
+        n_before = len(self.employee.message_ids)
+        inc.action_export_to_appraisal()
+        self.assertGreater(len(self.employee.message_ids), n_before)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -731,11 +911,13 @@ class TestUC11PortalDataIsolation(FleetTelematicsBase):
     def test_01_driver_sees_only_own_incentive(self):
         Incentive = self.env['fleet.telematics.incentive']
         own = Incentive.create({
-            'driver_id': self.employee.id, 'period_month': 6, 'period_year': 2026,
+            'driver_id': self.employee.id,
+            'date_from': date(2026, 6, 1), 'date_to': date(2026, 6, 30),
             'avg_score': 90.0,
         })
         others = Incentive.create({
-            'driver_id': self.other_employee.id, 'period_month': 6, 'period_year': 2026,
+            'driver_id': self.other_employee.id,
+            'date_from': date(2026, 6, 1), 'date_to': date(2026, 6, 30),
             'avg_score': 70.0,
         })
         visible = Incentive.with_user(self.driver_user).search([])

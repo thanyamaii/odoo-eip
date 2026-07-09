@@ -13,6 +13,10 @@
     'depends': [
         'fleet',
         'hr',
+        'hr_contract',  # เพิ่ม 2026-07-09 — _apply_backend_bonus() ต้องใช้
+                        # hr.contract.wage ดึง Base Salary แต่โมดูลนี้ไม่เคย
+                        # อยู่ใน depends เลย ทำให้ self.env['hr.contract']
+                        # หาโมเดลไม่เจอ (KeyError) ถ้ายังไม่เคยติดตั้งแยกไว้เอง
         'web',
         'mail',     # เพิ่ม 2026-07-06 — UC-10 Audit Log (mail.thread บน Incentive)
         'portal',   # เพิ่ม 2026-07-06 — UC-11 Self-service ผ่าน Odoo Portal

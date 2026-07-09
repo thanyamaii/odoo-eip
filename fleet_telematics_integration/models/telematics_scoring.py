@@ -17,8 +17,9 @@ class TelematicsScoringConfig(models.Model):
 
     # [A] ข้อมูลระบุ Config
     name           = fields.Char(string='Config Name', required=True)
-    active         = fields.Boolean(string='Active', default=True,
-        help='Active ได้เพียง 1 config เท่านั้น')
+    active         = fields.Boolean(string='Active', default=False,
+        help='Active ได้เพียง 1 config เท่านั้น — ตอนสร้างใหม่ต้องปิดไว้ก่อน '
+             'เพื่อให้กรอกข้อมูลและทดสอบ Push ได้ก่อนเปิดใช้งานจริง')
     effective_date = fields.Date(string='Effective Date', required=True)
 
     # [B] คะแนนพื้นฐาน
@@ -73,15 +74,21 @@ class TelematicsScoringConfig(models.Model):
     approved_at = fields.Datetime(string='วันที่อนุมัติ', readonly=True)
 
     # [F3] ล็อกฟอร์มอัตโนมัติเมื่อ Active หรือเคย Push แล้ว (ตามบรีฟข้อ 3)
+    # [F3] ล็อกฟอร์มอัตโนมัติเมื่อ Active เท่านั้น (แก้ 2026-07-09 ตามบรีฟใหม่)
+    # เดิมล็อกด้วย active OR last_push_at ทำให้แก้ไขไม่ได้ตลอดไปหลัง Push
+    # ครั้งแรกแม้จะปิด Active แล้วก็ตาม — ผิดจากที่ต้องการ (บรีฟระบุชัดว่า
+    # "ตราบใดที่ Active ยังเป็น False ต้องปล่อยให้ Fleet Manager แก้ไขค่าเกณฑ์
+    # และกด Push อัปเดตไปหลังบ้านได้เรื่อยๆ") จึงตัด last_push_at ออกจาก
+    # เงื่อนไขล็อก เหลือแค่ active เพียงอย่างเดียว
     is_locked = fields.Boolean(
         string='ล็อกการแก้ไข', compute='_compute_is_locked',
-        help='True เมื่อ Active=True หรือเคย Push ไป Backend แล้ว — '
-             'ฟิลด์เกณฑ์ทั้งหมดจะแก้ไขไม่ได้จนกว่าจะปิด Active')
+        help='True เมื่อ Active=True เท่านั้น — ฟิลด์เกณฑ์ทั้งหมดจะแก้ไขไม่ได้ '
+             'จนกว่าจะปิด Active (ตอน Active=False แก้ไข/Push ซ้ำได้เรื่อยๆ)')
 
-    @api.depends('active', 'last_push_at')
+    @api.depends('active')
     def _compute_is_locked(self):
         for rec in self:
-            rec.is_locked = bool(rec.active or rec.last_push_at)
+            rec.is_locked = bool(rec.active)
 
     # ============================================================
     # [G] Constraints
@@ -160,15 +167,16 @@ class TelematicsScoringConfig(models.Model):
                 )
 
     # ============================================================
-    # [G2] เพิ่ม 2026-07-08 — ล็อกฟิลด์เกณฑ์ทั้งหมดเมื่อ Active=True หรือ
-    # เคย Push ไป Backend แล้ว (ตามบรีฟข้อ 3 "Read-only ชั้น Python & XML")
+    # [G2] เพิ่ม 2026-07-08 (แก้ 2026-07-09 ตามบรีฟใหม่) — ล็อกฟิลด์เกณฑ์
+    # ทั้งหมดเมื่อ Active=True เท่านั้น (ตามบรีฟข้อ 4 "Data Security")
     #
     # นี่คือชั้น Python (บังคับจริงแม้เรียกผ่าน API/RPC ตรงๆ) ส่วนชั้น XML
     # (attrs readonly บนฟอร์ม) อยู่ที่ views/telematics_scoring_views.xml
     #
     # ไม่ล็อก field สถานะ (last_push_at, last_push_status, approved_by_id,
     # approved_at, is_locked) และไม่ล็อก 'active' เอง — ผู้ใช้ต้องปิด
-    # Active ได้เพื่อปลดล็อกฟิลด์อื่น (deactivate ก่อนแล้วค่อยแก้ไข)
+    # Active ได้เพื่อปลดล็อกฟิลด์อื่น — ตอน Active=False แก้ไข/Push ซ้ำ
+    # ได้เรื่อยๆ แม้เคย Push ไปแล้วก่อนหน้านี้ก็ตาม
     # ============================================================
     _LOCKED_CONFIG_FIELDS = {
         'name', 'effective_date',
@@ -187,10 +195,10 @@ class TelematicsScoringConfig(models.Model):
         touched = self._LOCKED_CONFIG_FIELDS.intersection(vals.keys())
         if touched:
             for rec in self:
-                if rec.active or rec.last_push_at:
+                if rec.active:
                     raise UserError(
-                        'Config นี้ Active อยู่ หรือเคย Push ไป Backend แล้ว — '
-                        'แก้ไขเกณฑ์คะแนนไม่ได้ เพื่อความโปร่งใสระหว่างรอบประเมิน\n\n'
+                        'Config นี้ Active อยู่ — แก้ไขเกณฑ์คะแนนไม่ได้ '
+                        'เพื่อความโปร่งใสระหว่างรอบประเมิน\n\n'
                         'วิธีแก้ไข: ปิด Active ก่อน (หรือสร้าง Config เวอร์ชันใหม่แทน)'
                     )
         return super().write(vals)
