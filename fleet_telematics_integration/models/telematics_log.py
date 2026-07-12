@@ -228,11 +228,14 @@ class TelematicsLog(models.Model):
                                 '_cron_sync_trips: ดึง events ของ trip %s ไม่สำเร็จ: %s',
                                 ext_id, e)
                     # ── FDD §12.5 ขั้นตอนที่ 11-12 ────────────────────────────
-                    # 11. อัปเดต odometer ของรถจาก distance_km สะสม
+                    # 11. อัปเดต odometer + engine hours ของรถจาก trip นี้
                     # 12. ตรวจสอบ maintenance threshold → สร้าง service record
+                    # แก้ 2026-07-12: ส่ง duration_min เข้าไปด้วยเพื่อสะสม
+                    # ชั่วโมงเดินเครื่อง (Trigger 2 ที่เคยขาดหายไป)
                     if vals.get('vehicle_id') and vals.get('distance_km'):
                         self._update_odometer_and_check_maintenance(
-                            vals['vehicle_id'], vals['distance_km'])
+                            vals['vehicle_id'], vals['distance_km'],
+                            duration_min=trip_rec.duration_min or 0.0)
                 except Exception as e:
                     _logger.warning(
                         '_cron_sync_trips: บันทึก trip %s ล้มเหลว: %s', ext_id, e)
@@ -660,23 +663,33 @@ class TelematicsLog(models.Model):
     #   2) ชั่วโมงเดินเครื่องสะสม (เช่น ทุก 250 ชั่วโมง)
     #   3) ช่วงเวลา (เช่น ทุก 3 เดือน) — คำนวณจากวันที่ service ล่าสุด
     #
+    # แก้ 2026-07-12: เดิม Trigger 2 (ชั่วโมงเดินเครื่อง) หายไปทั้งหมด — ไม่เคย
+    # สะสมชั่วโมงเดินเครื่องเลย ทั้งที่มี duration_min ต่อทริปอยู่แล้ว เพิ่มพารามิเตอร์
+    # duration_min เข้ามาสะสมลง fleet.vehicle.telematics_engine_hours และเพิ่ม
+    # เงื่อนไข Trigger 2 ให้ครบตาม FDD
+    #
     # ค่า threshold ดึงจาก ir.config_parameter เพื่อให้ Admin ปรับได้
     # ============================================================
     @api.model
-    def _update_odometer_and_check_maintenance(self, vehicle_id, distance_km):
+    def _update_odometer_and_check_maintenance(self, vehicle_id, distance_km, duration_min=0.0):
         Vehicle = self.env['fleet.vehicle'].sudo().browse(vehicle_id)
         if not Vehicle.exists():
             return
 
-        # ── ขั้นตอนที่ 11: อัปเดต odometer ────────────────────────────────────
+        # ── ขั้นตอนที่ 11: อัปเดต odometer + ชั่วโมงเดินเครื่องสะสม ────────────
         current_odometer = Vehicle.odometer
         new_odometer     = current_odometer + distance_km
-        Vehicle.write({'odometer': new_odometer})
+        new_engine_hours = (Vehicle.telematics_engine_hours or 0.0) + (duration_min / 60.0)
+        Vehicle.write({
+            'odometer':                new_odometer,
+            'telematics_engine_hours': new_engine_hours,
+        })
 
         # ── ขั้นตอนที่ 12: ตรวจสอบ maintenance threshold ──────────────────────
         ICP = self.env['ir.config_parameter'].sudo()
-        km_threshold  = float(ICP.get_param('fleet_telematics.maintenance_km',   10000))
-        day_threshold = int(  ICP.get_param('fleet_telematics.maintenance_days',  90))
+        km_threshold    = float(ICP.get_param('fleet_telematics.maintenance_km',    10000))
+        hour_threshold  = float(ICP.get_param('fleet_telematics.maintenance_hours',  250))
+        day_threshold   = int(  ICP.get_param('fleet_telematics.maintenance_days',    90))
 
         Service = self.env['fleet.vehicle.log.services'].sudo()
 
@@ -695,6 +708,17 @@ class TelematicsLog(models.Model):
                 should_create = True
                 reason = f'ระยะทางสะสม {km_since:,.0f} km (threshold {km_threshold:,.0f} km)'
 
+            # Trigger 2: ชั่วโมงเดินเครื่อง — เทียบจากชั่วโมงสะสม ณ ตอน service
+            # ล่าสุด (เก็บไว้ใน description ตอนสร้าง ไม่มี field เฉพาะบน
+            # fleet.vehicle.log.services เดิม จึงประมาณจากชั่วโมงสะสมปัจจุบัน
+            # หารด้วยจำนวนครั้งที่ยังไม่ service — ใช้วิธีง่ายกว่า: เทียบ
+            # ชั่วโมงสะสมทั้งหมดกับ threshold ทบต้นทุกครั้งที่ service แล้ว
+            hours_since = new_engine_hours - (last_service.engine_hours_at_service or 0.0)
+            if hours_since >= hour_threshold:
+                should_create = True
+                reason = (reason + ' / ' if reason else '') + \
+                    f'ชั่วโมงเดินเครื่องสะสม {hours_since:,.1f} ชม. (threshold {hour_threshold:,.0f} ชม.)'
+
             # Trigger 3: ช่วงเวลา
             if last_service.date:
                 from datetime import date as _date
@@ -704,19 +728,25 @@ class TelematicsLog(models.Model):
                     reason = (reason + ' / ' if reason else '') + \
                         f'ผ่านมา {days_since} วัน (threshold {day_threshold} วัน)'
         else:
-            # ไม่มี service record เลย ถ้า odometer เกิน threshold แรก → สร้าง
+            # ไม่มี service record เลย ถ้า odometer หรือชั่วโมงเครื่องเกิน
+            # threshold แรก → สร้าง (เช็คทั้งคู่ ไม่ใช่แค่ odometer แบบเดิม)
             if new_odometer >= km_threshold:
                 should_create = True
                 reason = f'odometer {new_odometer:,.0f} km ถึง threshold แรก {km_threshold:,.0f} km'
+            if new_engine_hours >= hour_threshold:
+                should_create = True
+                reason = (reason + ' / ' if reason else '') + \
+                    f'ชั่วโมงเดินเครื่อง {new_engine_hours:,.1f} ชม. ถึง threshold แรก {hour_threshold:,.0f} ชม.'
 
         if should_create:
             # สร้าง fleet.vehicle.log.services record อัตโนมัติ
             service_rec = Service.create({
-                'vehicle_id':   vehicle_id,
-                'date':         fields.Date.today(),
-                'odometer':     new_odometer,
-                'description':  f'[Auto] แจ้งเตือนซ่อมบำรุง: {reason}',
-                'state':        'new',
+                'vehicle_id':             vehicle_id,
+                'date':                   fields.Date.today(),
+                'odometer':               new_odometer,
+                'engine_hours_at_service': new_engine_hours,
+                'description':            f'[Auto] แจ้งเตือนซ่อมบำรุง: {reason}',
+                'state':                  'new',
             })
             _logger.info(
                 '_check_maintenance: สร้าง service alert รถ %s (id=%s): %s',

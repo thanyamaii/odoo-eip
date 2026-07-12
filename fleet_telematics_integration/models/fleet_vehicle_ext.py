@@ -114,6 +114,14 @@ class FleetVehicleExt(models.Model):
     total_trips        = fields.Integer(string='Total Trips',        default=0)
     total_distance_km  = fields.Float(string='Total Distance (km)',  digits=(10, 2), default=0.0)
     avg_driver_score   = fields.Float(string='Avg Driver Score',     digits=(5,  2), default=0.0)
+    # เพิ่ม 2026-07-12 (พบ gap ตอนตรวจสอบตาม FDD §2.2): FDD ระบุ trigger
+    # ซ่อมบำรุง 3 รูปแบบ (ระยะทาง / ชั่วโมงเดินเครื่อง / ช่วงเวลา) แต่โค้ดเดิม
+    # ทำแค่ 2 แบบ (ระยะทาง+ช่วงเวลา) — ไม่เคยสะสมชั่วโมงเดินเครื่องเลย ทั้งที่
+    # มี duration_min ต่อทริปอยู่แล้วในโมเดล fleet.telematics.log
+    telematics_engine_hours = fields.Float(
+        string='Engine Hours (สะสม)', digits=(10, 2), default=0.0,
+        help='ชั่วโมงเดินเครื่องสะสม รวมจาก duration_min ของทุกทริปที่ sync แล้ว '
+             '— ใช้เป็น Trigger ที่ 2 ของการแจ้งเตือนซ่อมบำรุง (FDD §2.2)')
     telematics_log_ids = fields.One2many(
         'fleet.telematics.log', 'vehicle_id', string='Trip Logs'
     )
@@ -581,3 +589,20 @@ class FleetVehicleExt(models.Model):
             }
         except Exception as e:
             raise UserError(f'ดึงประวัติ trip ไม่สำเร็จ: {e}')
+
+
+# ==============================================================================
+# เพิ่ม 2026-07-12 — extend fleet.vehicle.log.services (core Odoo model)
+#
+# เพิ่ม field engine_hours_at_service เพื่อบันทึก snapshot ของชั่วโมงเดินเครื่อง
+# สะสม ณ ตอนที่ทำ service แต่ละครั้ง — ใช้เป็นจุดอ้างอิงเทียบ Trigger 2
+# (ชั่วโมงเดินเครื่อง) ของการแจ้งเตือนซ่อมบำรุงครั้งถัดไป (ดู
+# models/telematics_log.py: _update_odometer_and_check_maintenance)
+# ==============================================================================
+class FleetVehicleLogServicesExt(models.Model):
+    _inherit = 'fleet.vehicle.log.services'
+
+    engine_hours_at_service = fields.Float(
+        string='Engine Hours (ตอน Service)', digits=(10, 2),
+        help='ชั่วโมงเดินเครื่องสะสมของรถคันนี้ ณ ตอนที่ทำ service ครั้งนี้ '
+             '— ใช้เทียบ Trigger ชั่วโมงเดินเครื่องของรอบซ่อมบำรุงถัดไป')

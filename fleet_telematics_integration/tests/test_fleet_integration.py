@@ -937,3 +937,81 @@ class TestUC11PortalDataIsolation(FleetTelematicsBase):
         visible = Log.with_user(self.driver_user).search([])
         self.assertIn(own_trip, visible)
         self.assertNotIn(other_trip, visible)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# UC-Maintenance — 3 Trigger การแจ้งเตือนซ่อมบำรุง (FDD §2.2)
+#   เพิ่มใหม่ 2026-07-12: พบว่า Trigger 2 (ชั่วโมงเดินเครื่อง) ขาดหายไปทั้งหมด
+#   ในโค้ดเดิม — ไม่เคยมี test คลุมส่วนนี้เลยมาก่อน
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestMaintenanceTriggers(FleetTelematicsBase):
+
+    def setUp(self):
+        super().setUp()
+        ICP = self.env['ir.config_parameter'].sudo()
+        ICP.set_param('fleet_telematics.maintenance_km', '10000')
+        ICP.set_param('fleet_telematics.maintenance_hours', '250')
+        ICP.set_param('fleet_telematics.maintenance_days', '90')
+
+    def test_01_engine_hours_accumulate_on_sync(self):
+        """duration_min ของทริปต้องถูกสะสมลง telematics_engine_hours ของรถ"""
+        Log = self.env['fleet.telematics.log']
+        self.v1.write({'telematics_engine_hours': 0.0, 'odometer': 0})
+        Log._update_odometer_and_check_maintenance(
+            self.v1.id, distance_km=50.0, duration_min=120.0)  # 2 ชั่วโมง
+        self.assertAlmostEqual(self.v1.telematics_engine_hours, 2.0, places=2)
+
+    def test_02_hours_trigger_creates_service_when_no_prior_service(self):
+        """ไม่มี service record เลย + ชั่วโมงเครื่องเกิน threshold แรก → ต้องสร้าง"""
+        Log = self.env['fleet.telematics.log']
+        self.v1.write({'telematics_engine_hours': 0.0, 'odometer': 0})
+        Service = self.env['fleet.vehicle.log.services']
+        before = Service.search_count([('vehicle_id', '=', self.v1.id)])
+
+        # 260 ชั่วโมง (> threshold 250) ในทริปเดียว (ไม่สมจริงแต่พอสำหรับทดสอบ)
+        Log._update_odometer_and_check_maintenance(
+            self.v1.id, distance_km=100.0, duration_min=260 * 60)
+
+        after = Service.search_count([('vehicle_id', '=', self.v1.id)])
+        self.assertGreater(after, before, "ต้องสร้าง service alert เมื่อชั่วโมงเครื่องถึง threshold")
+
+    def test_03_hours_trigger_uses_snapshot_from_last_service(self):
+        """เทียบชั่วโมงสะสมกับ snapshot ตอน service ล่าสุด ไม่ใช่นับจากศูนย์ใหม่"""
+        Log     = self.env['fleet.telematics.log']
+        Service = self.env['fleet.vehicle.log.services']
+
+        # ตั้งให้เพิ่งเคย service ตอนชั่วโมงสะสม = 100
+        self.v1.write({'telematics_engine_hours': 100.0, 'odometer': 5000})
+        Service.create({
+            'vehicle_id': self.v1.id,
+            'date': date.today(),
+            'odometer': 5000,
+            'engine_hours_at_service': 100.0,
+            'description': 'Manual service (test baseline)',
+        })
+        before = Service.search_count([('vehicle_id', '=', self.v1.id)])
+
+        # เพิ่มอีกแค่ 50 ชั่วโมง (100+50=150 ยังไม่ถึง threshold 250) → ไม่ควรสร้างใหม่
+        Log._update_odometer_and_check_maintenance(
+            self.v1.id, distance_km=10.0, duration_min=50 * 60)
+        after_small = Service.search_count([('vehicle_id', '=', self.v1.id)])
+        self.assertEqual(after_small, before, "ยังไม่ถึง threshold ไม่ควรสร้าง service ใหม่")
+
+        # เพิ่มอีก 200 ชั่วโมง (150+200=350 เกิน threshold 250 จาก baseline 100) → ต้องสร้าง
+        Log._update_odometer_and_check_maintenance(
+            self.v1.id, distance_km=10.0, duration_min=200 * 60)
+        after_big = Service.search_count([('vehicle_id', '=', self.v1.id)])
+        self.assertGreater(after_big, after_small)
+
+    def test_04_km_trigger_still_works_unaffected(self):
+        """Trigger ระยะทางเดิมต้องยังทำงานถูกต้องหลังเพิ่ม Trigger ชั่วโมง"""
+        Log     = self.env['fleet.telematics.log']
+        Service = self.env['fleet.vehicle.log.services']
+        self.v1.write({'telematics_engine_hours': 0.0, 'odometer': 0})
+        before = Service.search_count([('vehicle_id', '=', self.v1.id)])
+
+        Log._update_odometer_and_check_maintenance(
+            self.v1.id, distance_km=15000.0, duration_min=10.0)  # เกิน 10,000 km
+
+        after = Service.search_count([('vehicle_id', '=', self.v1.id)])
+        self.assertGreater(after, before)

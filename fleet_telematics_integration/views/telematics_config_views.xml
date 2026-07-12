@@ -16,12 +16,6 @@
                             string="💾 บันทึกและทดสอบการเชื่อมต่อ"
                             type="object"
                             class="btn-primary"/>
-                    <!-- เพิ่มใหม่ — GET /api/v1/config_device: เทียบ device/vehicle
-                         mapping ระหว่าง Odoo กับ Backend ทั้งระบบ -->
-                    <button name="action_reconcile_devices"
-                            string="🔍 ตรวจสอบ Device ทั้งหมด (Reconcile)"
-                            type="object"
-                            class="btn-secondary"/>
                 </header>
                 <sheet>
                     <div class="oe_title">
