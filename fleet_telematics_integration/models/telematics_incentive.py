@@ -117,7 +117,11 @@ class TelematicsIncentive(models.Model):
         ('D', 'D — Needs Improvement'),
     ], string='Tier', default='D', readonly=True)
     bonus_pct    = fields.Float(string='Bonus %',      digits=(5, 2),  default=0.0, readonly=True)
-    base_salary  = fields.Float(string='Base Salary',  digits=(10, 2), default=0.0, readonly=True)
+    # แก้ 2026-07-09: เอา readonly=True ระดับ Python ออก — ตัวนี้เคยบังคับ
+    # ให้พิมพ์ไม่ได้ตลอดไม่ว่า state จะเป็นอะไร (override ทับ
+    # readonly="is_locked" ที่ตั้งไว้ในฝั่ง View จนไม่มีผลเลย) ปล่อยให้ View
+    # เป็นคนคุม readonly ตาม is_locked แทน (แก้ไขได้ตอน Draft เท่านั้น)
+    base_salary  = fields.Float(string='Base Salary',  digits=(10, 2), default=0.0)
     # แก้ 2026-07-09 (บรีฟข้อ 3): เดิม bonus_amount เป็น field ธรรมดาที่ตั้งค่า
     # ผ่าน write() ใน _apply_backend_bonus() เท่านั้น แต่ยังเป็นช่องที่ผู้ใช้
     # พิมพ์แก้ตรงๆ ได้เองจากหน้าฟอร์ม (ช่องโหว่โกงเงินโบนัส เพราะไม่บังคับว่า
@@ -243,12 +247,25 @@ class TelematicsIncentive(models.Model):
         api_key = Config.get_active_api_key()
 
         for rec in self:
-            # ดึง base_salary จาก hr.contract (สัญญาจ้างที่ active) เสมอ
-            contract = self.env['hr.contract'].sudo().search([
-                ('employee_id', '=', rec.driver_id.id),
-                ('state', '=', 'open'),
-            ], limit=1)
-            base_salary = contract.wage if contract else 0.0
+            # ดึง base_salary จาก hr.contract (สัญญาจ้างที่ active) ถ้ามีโมดูลนี้
+            # แก้ 2026-07-09: hr_contract ไม่มีอยู่ในบาง Odoo instance เลย
+            # (ไม่ใช่แค่ยังไม่ติดตั้ง) จึงเช็ค 'hr.contract' in self.env ก่อน
+            # เสมอ กัน KeyError พังทั้งฟอร์ม — ถ้าไม่มีโมดูลนี้ **ไม่ทับ**
+            # base_salary ด้วย 0 แต่คงค่าที่ผู้ใช้กรอกเองไว้ (rec.base_salary)
+            # เพื่อให้กรอกมือได้ตอน Draft แล้วไม่หายทุกครั้งที่กด Refresh/Confirm
+            if 'hr.contract' in self.env:
+                contract = self.env['hr.contract'].sudo().search([
+                    ('employee_id', '=', rec.driver_id.id),
+                    ('state', '=', 'open'),
+                ], limit=1)
+                base_salary = contract.wage if contract else 0.0
+            else:
+                _logger.info(
+                    '_apply_backend_bonus: ไม่มีโมดูล hr_contract ติดตั้งอยู่ — '
+                    'คงค่า Base Salary ที่กรอกเองไว้ (แก้ไขได้ตอน state=Draft '
+                    'เท่านั้น)'
+                )
+                base_salary = rec.base_salary
 
             bonus_pct = None
             tier = None
