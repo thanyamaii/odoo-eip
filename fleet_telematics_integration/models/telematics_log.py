@@ -228,14 +228,17 @@ class TelematicsLog(models.Model):
                                 '_cron_sync_trips: ดึง events ของ trip %s ไม่สำเร็จ: %s',
                                 ext_id, e)
                     # ── FDD §12.5 ขั้นตอนที่ 11-12 ────────────────────────────
-                    # 11. อัปเดต odometer + engine hours ของรถจาก trip นี้
+                    # 11. อัปเดต odometer + engine hours + สถิติสะสมของรถ
                     # 12. ตรวจสอบ maintenance threshold → สร้าง service record
-                    # แก้ 2026-07-12: ส่ง duration_min เข้าไปด้วยเพื่อสะสม
-                    # ชั่วโมงเดินเครื่อง (Trigger 2 ที่เคยขาดหายไป)
+                    # แก้ 2026-07-12: ส่ง duration_min + driver_score เข้าไปด้วย
+                    # เพื่อสะสม engine hours (Trigger 2) และ total_trips/
+                    # total_distance_km/avg_driver_score ของรถ (เดิมไม่เคย
+                    # อัปเดตเลยทั้งที่มี field อยู่แล้ว)
                     if vals.get('vehicle_id') and vals.get('distance_km'):
                         self._update_odometer_and_check_maintenance(
                             vals['vehicle_id'], vals['distance_km'],
-                            duration_min=trip_rec.duration_min or 0.0)
+                            duration_min=trip_rec.duration_min or 0.0,
+                            driver_score=vals.get('driver_score'))
                 except Exception as e:
                     _logger.warning(
                         '_cron_sync_trips: บันทึก trip %s ล้มเหลว: %s', ext_id, e)
@@ -671,7 +674,8 @@ class TelematicsLog(models.Model):
     # ค่า threshold ดึงจาก ir.config_parameter เพื่อให้ Admin ปรับได้
     # ============================================================
     @api.model
-    def _update_odometer_and_check_maintenance(self, vehicle_id, distance_km, duration_min=0.0):
+    def _update_odometer_and_check_maintenance(self, vehicle_id, distance_km,
+                                                duration_min=0.0, driver_score=None):
         Vehicle = self.env['fleet.vehicle'].sudo().browse(vehicle_id)
         if not Vehicle.exists():
             return
@@ -680,10 +684,28 @@ class TelematicsLog(models.Model):
         current_odometer = Vehicle.odometer
         new_odometer     = current_odometer + distance_km
         new_engine_hours = (Vehicle.telematics_engine_hours or 0.0) + (duration_min / 60.0)
-        Vehicle.write({
+
+        # แก้ 2026-07-12: พบว่า total_trips/total_distance_km/avg_driver_score
+        # ของ fleet.vehicle (แท็บ Telematics Settings) ไม่เคยถูกอัปเดตจากที่ไหน
+        # เลยทั้งที่มี field อยู่แล้ว — ค่าจะค้างเป็น 0 ตลอดไปแม้จะล็อก
+        # readonly ในหน้าจอแล้วก็ตาม (ดู views/fleet_vehicle_ext_views.xml)
+        # เพิ่มการสะสมค่าตรงนี้ ณ จุดเดียวกับที่อัปเดต odometer ต่อทริป
+        new_total_trips = (Vehicle.total_trips or 0) + 1
+        new_total_km    = (Vehicle.total_distance_km or 0.0) + distance_km
+        vals = {
             'odometer':                new_odometer,
             'telematics_engine_hours': new_engine_hours,
-        })
+            'total_trips':             new_total_trips,
+            'total_distance_km':       round(new_total_km, 2),
+        }
+        if driver_score is not None:
+            # ค่าเฉลี่ยสะสมแบบ running average — ไม่ต้อง query trip ทั้งหมดซ้ำ
+            old_avg = Vehicle.avg_driver_score or 0.0
+            old_n   = (Vehicle.total_trips or 0)
+            vals['avg_driver_score'] = round(
+                (old_avg * old_n + driver_score) / new_total_trips, 2)
+
+        Vehicle.write(vals)
 
         # ── ขั้นตอนที่ 12: ตรวจสอบ maintenance threshold ──────────────────────
         ICP = self.env['ir.config_parameter'].sudo()

@@ -1015,3 +1015,219 @@ class TestMaintenanceTriggers(FleetTelematicsBase):
 
         after = Service.search_count([('vehicle_id', '=', self.v1.id)])
         self.assertGreater(after, before)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Event Logs — Lockdown 3 ชั้น + Zone-based Speed Limit (models/telematics_event.py)
+#   เพิ่มใหม่ 2026-07-12: โมเดลนี้ไม่เคยมี test เลยมาก่อน ทั้งที่เป็นจุดที่
+#   ทำ read-only lock 3 ชั้นและ zone speed limit ไว้ค่อนข้างซับซ้อน
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestEventLogsLockdown(FleetTelematicsBase):
+
+    def setUp(self):
+        super().setUp()
+        self.trip = self.env['fleet.telematics.log'].create({
+            'vehicle_id':  self.v1.id,
+            'driver_id':   self.employee.id,
+            'trip_start':  '2026-06-10 08:00:00',
+            'external_trip_id': 'T-EVT-TEST-1',
+        })
+
+    def _event_vals(self, **kw):
+        vals = dict(
+            trip_id=self.trip.id,
+            event_type='harsh_brake',
+            occurred_at='2026-06-10 08:05:00',
+            lat=13.75, lon=100.50,  # ในกรอบกรุงเทพฯ
+            severity=70.0,
+            speed_at_event=50.0,
+        )
+        vals.update(kw)
+        return vals
+
+    # ── ข้อ 1: ล็อกแก้ไข/ลบ/สร้างผ่านหน้าจอไม่ได้เด็ดขาด ────────────────────
+    def test_01_create_without_sync_context_raises(self):
+        Event = self.env['fleet.telematics.event']
+        with self.assertRaises(UserError):
+            Event.create(self._event_vals())
+
+    def test_02_create_with_sync_context_succeeds(self):
+        Event = self.env['fleet.telematics.event'].with_context(
+            fleet_telematics_allow_sync=True)
+        ev = Event.create(self._event_vals())
+        self.assertTrue(ev.id)
+
+    def test_03_write_without_sync_context_raises(self):
+        Event = self.env['fleet.telematics.event'].with_context(
+            fleet_telematics_allow_sync=True)
+        ev = Event.create(self._event_vals())
+        ev = ev.with_context(fleet_telematics_allow_sync=False)
+        with self.assertRaises(UserError):
+            ev.write({'severity': 99.0})
+
+    def test_04_unlink_without_sync_context_raises(self):
+        Event = self.env['fleet.telematics.event'].with_context(
+            fleet_telematics_allow_sync=True)
+        ev = Event.create(self._event_vals())
+        ev = ev.with_context(fleet_telematics_allow_sync=False)
+        with self.assertRaises(UserError):
+            ev.unlink()
+
+    def test_05_write_with_sync_context_succeeds(self):
+        Event = self.env['fleet.telematics.event'].with_context(
+            fleet_telematics_allow_sync=True)
+        ev = Event.create(self._event_vals())
+        ev.write({'severity': 55.0})
+        self.assertEqual(ev.severity, 55.0)
+
+    # ── ข้อ 2: Zone-based Speed Limit ───────────────────────────────────────
+    def test_06_bangkok_coords_gets_80kmh_limit(self):
+        Event = self.env['fleet.telematics.event'].with_context(
+            fleet_telematics_allow_sync=True)
+        ev = Event.create(self._event_vals(lat=13.75, lon=100.50, speed_at_event=50.0))
+        self.assertEqual(ev.zone_label, 'bangkok')
+        self.assertEqual(ev.speed_limit_kmh, 80.0)
+
+    def test_07_outside_bangkok_gets_90kmh_limit(self):
+        Event = self.env['fleet.telematics.event'].with_context(
+            fleet_telematics_allow_sync=True)
+        # เชียงใหม่ — อยู่นอกกรอบกรุงเทพฯ ชัดเจน
+        ev = Event.create(self._event_vals(lat=18.79, lon=98.98, speed_at_event=50.0))
+        self.assertEqual(ev.zone_label, 'outside')
+        self.assertEqual(ev.speed_limit_kmh, 90.0)
+
+    def test_08_zero_coords_treated_as_outside_not_bangkok(self):
+        """lat/lon = 0,0 (ยังไม่มีข้อมูลจริง) ต้องไม่ถูกตีเป็นกรุงเทพฯ"""
+        Event = self.env['fleet.telematics.event'].with_context(
+            fleet_telematics_allow_sync=True)
+        ev = Event.create(self._event_vals(lat=0.0, lon=0.0, speed_at_event=50.0))
+        self.assertEqual(ev.zone_label, 'outside')
+
+    def test_09_over_speed_limit_flag_true_when_exceeding(self):
+        Event = self.env['fleet.telematics.event'].with_context(
+            fleet_telematics_allow_sync=True)
+        ev = Event.create(self._event_vals(
+            event_type='speeding', lat=13.75, lon=100.50, speed_at_event=95.0))
+        self.assertTrue(ev.is_over_speed_limit)  # 95 > 80 (กรุงเทพฯ)
+
+    def test_10_not_over_speed_limit_when_within_range(self):
+        Event = self.env['fleet.telematics.event'].with_context(
+            fleet_telematics_allow_sync=True)
+        ev = Event.create(self._event_vals(
+            lat=13.75, lon=100.50, speed_at_event=60.0))
+        self.assertFalse(ev.is_over_speed_limit)  # 60 <= 80
+
+    # ── ข้อ 3: vehicle_id / driver_id related fields ────────────────────────
+    def test_11_vehicle_id_derived_from_trip(self):
+        Event = self.env['fleet.telematics.event'].with_context(
+            fleet_telematics_allow_sync=True)
+        ev = Event.create(self._event_vals())
+        self.assertEqual(ev.vehicle_id, self.v1)
+
+    def test_12_driver_id_derived_from_trip(self):
+        Event = self.env['fleet.telematics.event'].with_context(
+            fleet_telematics_allow_sync=True)
+        ev = Event.create(self._event_vals())
+        self.assertEqual(ev.driver_id, self.employee)
+
+    def test_13_deleting_trip_cascades_to_events(self):
+        """ondelete='cascade' — ลบ trip แล้ว event ต้องหายตามด้วย"""
+        Event = self.env['fleet.telematics.event'].with_context(
+            fleet_telematics_allow_sync=True)
+        ev = Event.create(self._event_vals())
+        ev_id = ev.id
+        self.trip.with_context(fleet_telematics_allow_sync=True).unlink()
+        self.assertFalse(Event.browse(ev_id).exists())
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Vehicle Trip History Wizard (models/telematics_vehicle_trip.py)
+#   เพิ่มใหม่ 2026-07-12: wizard นี้ไม่เคยมี test เลยมาก่อน
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestVehicleTripHistoryWizard(FleetTelematicsBase):
+
+    def test_01_fetch_without_vehicle_raises(self):
+        wiz = self.env['fleet.telematics.vehicle.trip.history'].create({})
+        with self.assertRaises(UserError):
+            wiz.action_fetch()
+
+    def test_02_fetch_without_device_raises(self):
+        """รถที่ยังไม่ผูก GPS Device ต้องเตือนก่อนดึงข้อมูล ไม่ใช่ดึงข้อมูลว่างเปล่า"""
+        vehicle_no_device = self.env['fleet.vehicle'].create({
+            'model_id': self.fmodel.id,
+            'license_plate': 'NO-DEVICE-01',
+        })
+        wiz = self.env['fleet.telematics.vehicle.trip.history'].create({
+            'vehicle_id': vehicle_no_device.id,
+        })
+        with self.assertRaises(UserError):
+            wiz.action_fetch()
+
+    def test_03_fetch_with_device_succeeds(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {'trips': [], 'total': 0, 'total_pages': 1}
+        wiz = self.env['fleet.telematics.vehicle.trip.history'].create({
+            'vehicle_id': self.v1.id,  # self.v1 มี telematics_device_id ผูกไว้แล้ว
+        })
+        with patch('requests.get', return_value=mock_resp):
+            wiz.action_fetch()
+        self.assertTrue(wiz.has_result)
+        self.assertEqual(wiz.total_trips, 0)
+
+    def test_04_vehicle_info_fields_populate_from_selection(self):
+        """เลือกรถแล้ว field ยืนยัน (ทะเบียน/device) ต้องขึ้นอัตโนมัติ"""
+        wiz = self.env['fleet.telematics.vehicle.trip.history'].create({
+            'vehicle_id': self.v1.id,
+        })
+        self.assertEqual(wiz.vehicle_license_plate, self.v1.license_plate)
+        self.assertEqual(wiz.telematics_device_id, self.v1.telematics_device_id)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Vehicle Aggregated Stats — total_trips/total_distance_km/avg_driver_score
+#   เพิ่มใหม่ 2026-07-12: พบว่า field เหล่านี้บน fleet.vehicle ไม่เคยถูกอัปเดต
+#   จากที่ไหนเลย ทั้งที่มี field อยู่แล้ว (ค้างเป็น 0 ตลอดไป)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestVehicleAggregatedStats(FleetTelematicsBase):
+
+    def test_01_total_trips_increments_per_call(self):
+        Log = self.env['fleet.telematics.log']
+        self.v1.write({'total_trips': 0, 'total_distance_km': 0.0, 'odometer': 0})
+        Log._update_odometer_and_check_maintenance(self.v1.id, distance_km=10.0)
+        Log._update_odometer_and_check_maintenance(self.v1.id, distance_km=15.0)
+        self.assertEqual(self.v1.total_trips, 2)
+
+    def test_02_total_distance_km_accumulates(self):
+        Log = self.env['fleet.telematics.log']
+        self.v1.write({'total_trips': 0, 'total_distance_km': 0.0, 'odometer': 0})
+        Log._update_odometer_and_check_maintenance(self.v1.id, distance_km=10.0)
+        Log._update_odometer_and_check_maintenance(self.v1.id, distance_km=15.5)
+        self.assertAlmostEqual(self.v1.total_distance_km, 25.5, places=2)
+
+    def test_03_avg_driver_score_computed_as_running_average(self):
+        Log = self.env['fleet.telematics.log']
+        self.v1.write({
+            'total_trips': 0, 'total_distance_km': 0.0,
+            'avg_driver_score': 0.0, 'odometer': 0,
+        })
+        Log._update_odometer_and_check_maintenance(
+            self.v1.id, distance_km=10.0, driver_score=90.0)
+        self.assertEqual(self.v1.avg_driver_score, 90.0)
+
+        Log._update_odometer_and_check_maintenance(
+            self.v1.id, distance_km=10.0, driver_score=70.0)
+        # เฉลี่ยของ 90 และ 70 = 80
+        self.assertEqual(self.v1.avg_driver_score, 80.0)
+
+    def test_04_no_driver_score_leaves_avg_unchanged(self):
+        """ถ้าไม่ส่ง driver_score มา (None) ไม่ควรไปทำให้ avg เพี้ยน"""
+        Log = self.env['fleet.telematics.log']
+        self.v1.write({
+            'total_trips': 1, 'avg_driver_score': 85.0, 'odometer': 0,
+        })
+        Log._update_odometer_and_check_maintenance(self.v1.id, distance_km=5.0)
+        self.assertEqual(self.v1.avg_driver_score, 85.0)
