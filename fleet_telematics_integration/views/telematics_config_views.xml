@@ -43,18 +43,7 @@
                     </group>
 
                     <!-- Device Reconciliation Result (เพิ่มใหม่) -->
-                    <group string="🔍 ผลตรวจสอบ Device (Odoo ↔ Backend)"
-                           invisible="not last_reconciled_at">
-                        <group>
-                            <field name="last_reconciled_at" readonly="1"/>
-                            <field name="device_mismatch_count" readonly="1"
-                                   decoration-danger="device_mismatch_count > 0"
-                                   decoration-success="device_mismatch_count == 0"/>
-                        </group>
-                        <field name="device_mismatch_note" readonly="1"
-                               nolabel="1" widget="text"
-                               invisible="not device_mismatch_note"/>
-                    </group>
+
 
                     <!-- [แก้ไข] เหลือช่องเดียวสำหรับ API URL Backend -->
                     <group string="⚙️ ตั้งค่า Backend API URL">
