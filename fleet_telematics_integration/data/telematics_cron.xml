@@ -52,4 +52,18 @@
         <field name="user_id" ref="base.user_root"/>
     </record>
 
+    <!-- เพิ่มใหม่ 2026-07-16 — Data Retention ตาม FDD §13 (Non-Functional
+         Requirements): ลบ Trip Log (+ Event ที่ผูกอยู่ ผ่าน cascade) ที่เก่า
+         กว่า 3 ปี ทุกเดือน — ไม่แตะ Incentive เด็ดขาด (ต้องเก็บตลอดชีวิต) -->
+    <record id="ir_cron_telematics_purge_old_trips" model="ir.cron">
+        <field name="name">Fleet Telematics: Purge Old Trips (Data Retention 3y)</field>
+        <field name="model_id" ref="model_fleet_telematics_log"/>
+        <field name="state">code</field>
+        <field name="code">model._cron_purge_old_trips()</field>
+        <field name="interval_number">1</field>
+        <field name="interval_type">months</field>
+        <field name="active">True</field>
+        <field name="user_id" ref="base.user_root"/>
+    </record>
+
 </odoo>

@@ -15,6 +15,29 @@ from odoo.exceptions import ValidationError, UserError
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# เพิ่ม 2026-07-16: Odoo 19 เปลี่ยนชื่อ field many2many บน res.users จาก
+# `groups_id` เป็น `group_ids` (ยืนยันจาก error จริงตอนรัน test บน Odoo 19
+# instance: "KeyError: 'groups_id'" / "ValueError: Invalid field 'groups_id'
+# in 'res.users'") — เขียน helper ตรวจหาชื่อ field ที่ถูกต้องแบบไดนามิก
+# แทนที่จะ hardcode ชื่อใดชื่อหนึ่งตรงๆ กันพังอีกถ้า Odoo เปลี่ยนชื่ออีกใน
+# อนาคต (ใช้ pattern เดียวกับที่แก้ไปแล้วใน telematics_incentive.py /
+# telematics_log.py ตอนเจอปัญหาเดียวกันฝั่ง res.groups.users)
+# ══════════════════════════════════════════════════════════════════════════════
+def _users_groups_field(env):
+    """คืนชื่อ field many2many ที่ถูกต้องบน res.users สำหรับผูกกับ res.groups
+    ('group_ids' ใน Odoo 19+, 'groups_id' ในเวอร์ชันเก่ากว่า)"""
+    User = env['res.users']
+    for fname in ('groups_id', 'group_ids'):
+        if fname in User._fields:
+            return fname
+    raise KeyError(
+        "หา field เชื่อมกลุ่มบน res.users ไม่เจอเลย (ลองแล้ว: groups_id, "
+        "group_ids) — Odoo เวอร์ชันนี้อาจเปลี่ยนชื่อ field อีกแล้ว ต้องเช็ค "
+        "ผ่าน Odoo shell: [f for f in env['res.users']._fields if 'group' in f]"
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Shared Setup — ข้อมูลพื้นฐานที่ใช้ร่วมกันทุก UC
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -44,8 +67,9 @@ class FleetTelematicsBase(TransactionCase):
 
         # เพิ่ม 2026-07-08: ต้องอยู่กลุ่ม Fleet Manager เพื่อทดสอบ action_approve()
         # ของ fleet.telematics.scoring.config (ดู TestUC02ScoringConfig)
+        # แก้ 2026-07-16: groups_id → group_ids ใน Odoo 19 (ดู _users_groups_field ด้านบน)
         cls.env.user.write({
-            'groups_id': [(4, cls.env.ref('fleet.fleet_group_manager').id)]
+            _users_groups_field(cls.env): [(4, cls.env.ref('fleet.fleet_group_manager').id)]
         })
 
     def _make_vehicle(self, plate, device=None):
@@ -900,9 +924,10 @@ class TestUC11PortalDataIsolation(FleetTelematicsBase):
     def setUpClass(cls):
         super().setUpClass()
         Users = cls.env['res.users'].with_context(no_reset_password=True)
+        # แก้ 2026-07-16: groups_id → group_ids ใน Odoo 19 (ดู _users_groups_field)
         cls.driver_user = Users.create({
             'name': 'Driver User', 'login': 'driver_user_test',
-            'groups_id': [(6, 0, [cls.env.ref('fleet.fleet_group_user').id])],
+            _users_groups_field(cls.env): [(6, 0, [cls.env.ref('fleet.fleet_group_user').id])],
         })
         cls.employee.write({'user_id': cls.driver_user.id})
 
@@ -1231,3 +1256,87 @@ class TestVehicleAggregatedStats(FleetTelematicsBase):
         })
         Log._update_odometer_and_check_maintenance(self.v1.id, distance_km=5.0)
         self.assertEqual(self.v1.avg_driver_score, 85.0)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Data Retention (FDD §13) — เพิ่มใหม่ 2026-07-16
+#   ลบ Trip Log ที่เก่ากว่าเกณฑ์ที่ตั้งไว้ (default 3 ปี) ไม่แตะ Incentive
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestDataRetention(FleetTelematicsBase):
+
+    def setUp(self):
+        super().setUp()
+        ICP = self.env['ir.config_parameter'].sudo()
+        ICP.set_param('fleet_telematics.trip_retention_years', '3')
+
+    def test_01_old_trip_gets_purged(self):
+        """ทริปที่เก่ากว่า 3 ปี ต้องถูกลบทิ้งหลังรัน cron"""
+        Log = self.env['fleet.telematics.log']
+        old_trip = Log.create({
+            'vehicle_id': self.v1.id,
+            'trip_start': '2020-01-01 08:00:00',
+            'external_trip_id': 'T-OLD-1',
+        })
+        old_id = old_trip.id
+        Log._cron_purge_old_trips()
+        self.assertFalse(Log.browse(old_id).exists())
+
+    def test_02_recent_trip_not_purged(self):
+        """ทริปที่ยังไม่เกิน 3 ปี ต้องไม่ถูกลบ"""
+        Log = self.env['fleet.telematics.log']
+        recent_trip = Log.create({
+            'vehicle_id': self.v1.id,
+            'trip_start': fields.Datetime.now(),
+            'external_trip_id': 'T-RECENT-1',
+        })
+        recent_id = recent_trip.id
+        Log._cron_purge_old_trips()
+        self.assertTrue(Log.browse(recent_id).exists())
+
+    def test_03_purge_cascades_to_events(self):
+        """ลบทริปเก่าแล้ว Event ที่ผูกอยู่ต้องหายไปด้วย (cascade)"""
+        Log = self.env['fleet.telematics.log']
+        Event = self.env['fleet.telematics.event']
+        old_trip = Log.create({
+            'vehicle_id': self.v1.id,
+            'trip_start': '2019-06-01 08:00:00',
+            'external_trip_id': 'T-OLD-2',
+        })
+        ev = Event.with_context(fleet_telematics_allow_sync=True).create({
+            'trip_id': old_trip.id,
+            'event_type': 'harsh_brake',
+            'occurred_at': '2019-06-01 08:05:00',
+            'lat': 13.75, 'lon': 100.50,
+            'severity': 70.0, 'speed_at_event': 50.0,
+        })
+        ev_id = ev.id
+        Log._cron_purge_old_trips()
+        self.assertFalse(Event.browse(ev_id).exists())
+
+    def test_04_incentive_never_purged(self):
+        """Incentive ต้องไม่ถูกแตะต้องเลย ไม่ว่าจะเก่าแค่ไหน (เก็บตลอดชีวิต)"""
+        Log = self.env['fleet.telematics.log']
+        Incentive = self.env['fleet.telematics.incentive']
+        old_inc = Incentive.create({
+            'driver_id': self.employee.id,
+            'date_from': date(2018, 1, 1), 'date_to': date(2018, 1, 31),
+            'avg_score': 90.0,
+        })
+        old_inc_id = old_inc.id
+        Log._cron_purge_old_trips()
+        self.assertTrue(Incentive.browse(old_inc_id).exists(),
+                         "Incentive ต้องเก็บตลอดชีวิต ห้าม cron นี้ไปลบเด็ดขาด")
+
+    def test_05_retention_period_configurable(self):
+        """เปลี่ยนค่า retention เป็น 1 ปี แล้วทริปอายุ 2 ปีต้องโดนลบด้วย"""
+        ICP = self.env['ir.config_parameter'].sudo()
+        ICP.set_param('fleet_telematics.trip_retention_years', '1')
+        Log = self.env['fleet.telematics.log']
+        trip_2y = Log.create({
+            'vehicle_id': self.v1.id,
+            'trip_start': '2024-01-01 08:00:00',
+            'external_trip_id': 'T-2Y-1',
+        })
+        trip_id = trip_2y.id
+        Log._cron_purge_old_trips()
+        self.assertFalse(Log.browse(trip_id).exists())

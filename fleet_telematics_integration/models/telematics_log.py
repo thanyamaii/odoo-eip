@@ -22,6 +22,7 @@
 import logging
 import requests
 from datetime import datetime, timezone
+from markupsafe import Markup
 
 from odoo import models, fields, api
 from odoo.exceptions import UserError
@@ -776,14 +777,77 @@ class TelematicsLog(models.Model):
             )
 
             # ส่ง Odoo notification ให้ Fleet Manager ทราบ
-            managers = self.env.ref('fleet.fleet_group_manager').users
-            if managers:
+            # แก้ 2026-07-16: เดิมใช้ managers.users ตรงๆ ซึ่งเป็น field ที่ Odoo 19
+            # ถอดออกไปแล้ว (บั๊กเดียวกับที่เจอใน telematics_incentive.py
+            # _notify_hr_tier_d — error จริง: "'res.groups' object has no
+            # attribute 'users'") แก้ด้วยวิธีเดียวกัน: query จาก res.users แทน
+            # พร้อม wrap body ด้วย Markup() ให้ HTML tag render ถูกต้อง (ไม่งั้น
+            # จะโชว์ <b>...</b> เป็นตัวหนังสือดิบเหมือนที่เจอมาก่อน)
+            managers_group = self.env.ref('fleet.fleet_group_manager', raise_if_not_found=False)
+            manager_users = self.env['res.users']
+            if managers_group:
+                User = self.env['res.users']
+                for fname in ('groups_id', 'group_ids'):
+                    if fname in User._fields:
+                        manager_users = User.sudo().search([(fname, 'in', managers_group.ids)])
+                        break
+
+            if manager_users:
+                body = Markup(
+                    '🔧 <b>แจ้งเตือนซ่อมบำรุงอัตโนมัติ</b><br/>'
+                    'รถ: <b>{vehicle}</b><br/>'
+                    'เหตุผล: {reason}<br/>'
+                    'Odometer ปัจจุบัน: {odo} km'
+                ).format(vehicle=Vehicle.name, reason=reason, odo=f'{new_odometer:,.0f}')
                 service_rec.sudo().message_post(
-                    body=f'🔧 <b>แจ้งเตือนซ่อมบำรุงอัตโนมัติ</b><br/>'
-                         f'รถ: {Vehicle.name}<br/>'
-                         f'เหตุผล: {reason}<br/>'
-                         f'Odometer ปัจจุบัน: {new_odometer:,.0f} km',
-                    partner_ids=managers.mapped('partner_id').ids,
+                    body=body,
+                    partner_ids=manager_users.partner_id.ids,
                     message_type='notification',
                     subtype_xmlid='mail.mt_note',
                 )
+            else:
+                _logger.warning(
+                    '_check_maintenance: ไม่พบผู้ใช้ในกลุ่ม Fleet Manager ที่จะแจ้งเตือน '
+                    '(vehicle_id=%s)', vehicle_id,
+                )
+    # ============================================================
+    # [Q] เพิ่ม 2026-07-16 — Data Retention ตาม FDD §13 (Non-Functional
+    # Requirements): "เก็บ raw telemetry 90 วัน, trip summary 3 ปี,
+    # incentive records ตลอดชีวิต"
+    #
+    # หมายเหตุขอบเขต: "raw telemetry" (ข้อมูลดิบจาก MQTT ทุก 5 วิ) เก็บอยู่ใน
+    # TimescaleDB ฝั่ง Backend เท่านั้น ไม่เคยถูกเก็บใน Odoo เลยตั้งแต่แรก —
+    # การลบข้อมูลส่วนนั้นจึงเป็นหน้าที่ของทีม Backend ไม่ใช่โมดูลนี้
+    #
+    # ส่วนที่ Odoo ต้องรับผิดชอบคือ "trip summary" (fleet.telematics.log)
+    # เท่านั้น — ต้องลบทริปที่เก่ากว่า 3 ปีทิ้ง ส่วน Event (fleet.telematics.
+    # event) จะถูกลบตามไปด้วยอัตโนมัติผ่าน ondelete='cascade' ที่ผูกกับ
+    # trip_id อยู่แล้ว ไม่ต้องเขียนโค้ดลบแยก
+    #
+    # ⚠️ ไม่แตะ fleet.telematics.incentive เด็ดขาด เพราะ FDD ระบุชัดว่าต้อง
+    # เก็บ "ตลอดชีวิต" (lifetime) — ถ้าใครแก้ค่า default วันที่ในอนาคต ต้อง
+    # ระวังไม่ให้ retention นี้ไปกระทบ incentive โดยไม่ตั้งใจ
+    # ============================================================
+    @api.model
+    def _cron_purge_old_trips(self):
+        ICP = self.env['ir.config_parameter'].sudo()
+        retention_years = int(ICP.get_param('fleet_telematics.trip_retention_years', 3))
+
+        from dateutil.relativedelta import relativedelta
+        cutoff = fields.Datetime.now() - relativedelta(years=retention_years)
+
+        old_trips = self.sudo().search([('trip_start', '<', cutoff)])
+        count = len(old_trips)
+
+        if count:
+            _logger.info(
+                '_cron_purge_old_trips: กำลังลบ Trip Log ที่เก่ากว่า %s ปี '
+                '(ก่อน %s) จำนวน %s รายการ (Event ที่ผูกอยู่จะถูกลบตามด้วย '
+                'ผ่าน cascade)', retention_years, cutoff, count,
+            )
+            old_trips.with_context(fleet_telematics_allow_purge=True).unlink()
+        else:
+            _logger.info(
+                '_cron_purge_old_trips: ไม่พบ Trip Log ที่เก่ากว่า %s ปี — '
+                'ไม่มีอะไรต้องลบ', retention_years,
+            )

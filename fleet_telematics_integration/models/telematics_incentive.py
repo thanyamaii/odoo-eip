@@ -13,6 +13,7 @@ import logging
 from datetime import date, timedelta
 
 import requests
+from markupsafe import Markup
 
 from odoo import models, fields, api
 from odoo.exceptions import UserError
@@ -137,6 +138,9 @@ class TelematicsIncentive(models.Model):
     ], string='Bonus Source', readonly=True,
         help='ระบุว่า bonus_pct ปัจจุบันมาจาก Backend จริง หรือคำนวณสำรองในเครื่อง')
     bonus_last_synced = fields.Datetime(string='Bonus Synced At', readonly=True)
+    # เพิ่ม 2026-07-16: กันแจ้งเตือน HR ซ้ำหลายรอบ ถ้ากด Refresh from
+    # Backend ซ้ำๆ ขณะที่ยังเป็น Tier D อยู่เหมือนเดิม (ดู _notify_hr_tier_d)
+    tier_d_notified = fields.Boolean(string='แจ้งเตือน Tier D แล้ว', default=False, readonly=True)
 
     # ============================================================
     # [D0] เพิ่ม 2026-07-09 (บรีฟข้อ 5): ล็อกทั้งฟอร์มถาวรเมื่อพ้น Draft
@@ -242,30 +246,68 @@ class TelematicsIncentive(models.Model):
     # จาก Backend ควรกด "Refresh from Backend" ซ้ำก่อน Approve จริง
     # ============================================================
     def _apply_backend_bonus(self):
+        # เพิ่ม 2026-07-16: เดิมไม่มีการเช็คเลยว่าเลือก Driver ไว้หรือยัง
+        # ก่อนรัน — กด Refresh from Backend/Confirm ทั้งที่ยังไม่เลือกใครเลย
+        # จะเงียบๆ ไปคำนวณ avg_score จาก Trip Log ที่ driver_id ว่างเปล่า
+        # (ได้ 0 เสมอ) แทนที่จะเตือนให้เลือกก่อน เพิ่ม guard ให้ชัดเจน
+        no_driver = self.filtered(lambda r: not r.driver_id)
+        if no_driver:
+            raise UserError('กรุณาเลือก Driver ก่อน ถึงจะคำนวณโบนัสได้')
+
         Config = self.env['fleet.telematics.config']
         api_url = Config.get_active_api_url()
         api_key = Config.get_active_api_key()
 
         for rec in self:
-            # ดึง base_salary จาก hr.contract (สัญญาจ้างที่ active) ถ้ามีโมดูลนี้
-            # แก้ 2026-07-09: hr_contract ไม่มีอยู่ในบาง Odoo instance เลย
-            # (ไม่ใช่แค่ยังไม่ติดตั้ง) จึงเช็ค 'hr.contract' in self.env ก่อน
-            # เสมอ กัน KeyError พังทั้งฟอร์ม — ถ้าไม่มีโมดูลนี้ **ไม่ทับ**
-            # base_salary ด้วย 0 แต่คงค่าที่ผู้ใช้กรอกเองไว้ (rec.base_salary)
-            # เพื่อให้กรอกมือได้ตอน Draft แล้วไม่หายทุกครั้งที่กด Refresh/Confirm
-            if 'hr.contract' in self.env:
+            # ดึง base_salary จากสัญญาจ้างพนักงาน
+            # แก้ 2026-07-16: ยืนยันโครงสร้างจริงแล้วจาก Model Overview ของ
+            # ผู้ใช้ (Settings > Technical > Models > hr.version) — Odoo 19
+            # ใช้โมเดล hr.version แทน hr.contract เดิม ยืนยัน field จริง:
+            #   employee_id (many2one → hr.employee), wage (monetary),
+            #   is_current (boolean — true = สัญญาปัจจุบันที่ใช้งานอยู่ ใช้แทน
+            #   state == 'open' แบบเก่าของ hr.contract)
+            base_salary = 0.0
+            found_from_contract = False
+
+            if 'hr.version' in self.env:
+                # แก้ 2026-07-16: is_current เป็น compute field ที่ไม่ได้
+                # stored ในฐานข้อมูล (ยืนยันจาก error จริง: "Cannot convert
+                # hr.version.is_current to SQL because it is not stored")
+                # จึงเอาไปใส่ในเงื่อนไข search() ตรงๆ ไม่ได้ ต้องดึงทุก version
+                # ของพนักงานคนนั้นมาก่อน แล้วค่อยกรองด้วย Python ภายหลัง
+                # (ตอนนั้น compute field จะคำนวณค่าให้ตามปกติ เพราะไม่ผ่าน SQL)
+                all_versions = self.env['hr.version'].sudo().search([
+                    ('employee_id', '=', rec.driver_id.id),
+                ])
+                version = all_versions.filtered(lambda v: v.is_current)[:1]
+                if version:
+                    base_salary = version.wage or 0.0
+                    found_from_contract = True
+            elif 'hr.contract' in self.env:
+                # fallback: เผื่อรันบน Odoo เวอร์ชันเก่ากว่า 19 ที่ยังมี
+                # hr.contract แบบเดิมอยู่ (ก่อนเปลี่ยนเป็น hr.version)
                 contract = self.env['hr.contract'].sudo().search([
                     ('employee_id', '=', rec.driver_id.id),
                     ('state', '=', 'open'),
                 ], limit=1)
                 base_salary = contract.wage if contract else 0.0
-            else:
-                _logger.info(
-                    '_apply_backend_bonus: ไม่มีโมดูล hr_contract ติดตั้งอยู่ — '
-                    'คงค่า Base Salary ที่กรอกเองไว้ (แก้ไขได้ตอน state=Draft '
-                    'เท่านั้น)'
-                )
-                base_salary = rec.base_salary
+                found_from_contract = bool(contract)
+
+            if not found_from_contract:
+                if rec.driver_id.telematics_base_salary:
+                    _logger.info(
+                        '_apply_backend_bonus: ไม่พบ hr.version ที่ is_current=True '
+                        'สำหรับพนักงาน %s — ใช้ telematics_base_salary ที่กรอกไว้บน '
+                        'โปรไฟล์พนักงานแทน', rec.driver_id.name,
+                    )
+                    base_salary = rec.driver_id.telematics_base_salary
+                else:
+                    _logger.info(
+                        '_apply_backend_bonus: ไม่พบเงินเดือนจากทั้ง hr.version และ '
+                        'โปรไฟล์พนักงาน — คงค่า Base Salary ที่กรอกเองไว้ในใบนี้ '
+                        '(แก้ไขได้ตอน state=Draft เท่านั้น)'
+                    )
+                    base_salary = rec.base_salary
 
             bonus_pct = None
             tier = None
@@ -313,6 +355,21 @@ class TelematicsIncentive(models.Model):
                     'bonus_last_synced': fields.Datetime.now(),
                 })
 
+            # เพิ่ม 2026-07-16: ตาม FDD §12.4 (ตาราง Tier) ระบุไว้ชัดเจนว่า
+            # Tier D ต้องมี "0% + แจ้งเตือน HR" ไม่ใช่แค่ตั้ง bonus_pct=0
+            # เฉยๆ — เดิมโค้ดไม่เคยมีการแจ้งเตือนส่วนนี้เลย เพิ่มให้ครบตามสเปค
+            # ครอบด้วย try/except เพราะเป็นฟีเจอร์เสริม (นoti) ไม่ควรทำให้
+            # ปุ่ม Confirm/คำนวณโบนัสหลัก (ธุรกรรมสำคัญกว่า) พังไปด้วยถ้า
+            # ระบบแจ้งเตือนมีปัญหา (เช่น field ชื่อเปลี่ยนไปอีกใน Odoo เวอร์ชันถัดไป)
+            if rec.incentive_tier == 'D':
+                try:
+                    rec._notify_hr_tier_d()
+                except Exception:
+                    _logger.exception(
+                        '_notify_hr_tier_d ล้มเหลวสำหรับใบโบนัส id=%s — ข้ามไป '
+                        'ไม่ให้กระทบการคำนวณโบนัสหลัก', rec.id,
+                    )
+
     def _local_tier_from_score(self, return_pct=False):
         """Fallback เท่านั้น — ใช้เมื่อเรียก Backend ไม่สำเร็จ"""
         self.ensure_one()
@@ -327,6 +384,81 @@ class TelematicsIncentive(models.Model):
         else:
             tier, pct = 'D', 0.0
         return (tier, pct) if return_pct else tier
+
+    # ============================================================
+    # [F1b] เพิ่ม 2026-07-16 — ตาม FDD §12.4 ตาราง Tier ระบุไว้ชัดเจนว่า:
+    #   "D | 0 | ต้องปรับปรุง | แดง #dc3545 | 0% + แจ้งเตือน HR"
+    # เดิมระบบมีแค่แถบเตือนสีแดงในหน้าจอ (UI) แต่ไม่เคยแจ้งเตือน HR จริง
+    # ทั้งทาง chatter และอีเมล — เพิ่มให้ครบทั้ง 2 ช่องทางตามสเปค:
+    #   1) message_post บนตัว record เอง (ติดตามผ่าน chatter/inbox ได้)
+    #   2) ส่งอีเมลตรงถึงผู้ใช้ในกลุ่ม Fleet Manager (ทำหน้าที่เป็น HR/ผู้อนุมัติ
+    #      ตามที่ Security requirement ของ FDD กำหนดไว้ว่า
+    #      "เฉพาะ group_fleet_manager approve Incentive ได้")
+    # กันไม่ให้แจ้งซ้ำหลายรอบถ้ากด Refresh from Backend ซ้ำๆ ด้วย flag
+    # tier_d_notified
+    # ============================================================
+    def _notify_hr_tier_d(self):
+        self.ensure_one()
+        if self.tier_d_notified:
+            return  # กันแจ้งซ้ำถ้ากด Refresh from Backend หลายรอบ
+
+        # ใช้ Markup(...).format(...) แทนการต่อ f-string ตรงๆ เพื่อให้ค่าที่
+        # แทรกเข้าไป (ชื่อพนักงาน, period_label) ถูก escape อัตโนมัติ ป้องกัน
+        # ปัญหาถ้าชื่อพนักงานมีอักขระพิเศษปนอยู่ ในขณะที่ tag HTML ของ template
+        # เองยัง render ปกติ (Markup.format ฉลาดพอจะไม่ escape ซ้ำสิ่งที่เป็น
+        # Markup อยู่แล้ว แต่จะ escape เฉพาะค่าธรรมดาที่ส่งเข้ามา)
+        body = Markup(
+            '⚠️ <b>แจ้งเตือน Tier D — พนักงานคะแนนต่ำกว่าเกณฑ์</b><br/>'
+            'พนักงาน: <b>{driver_name}</b><br/>'
+            'รอบ: {period}<br/>'
+            'คะแนนเฉลี่ย: {score} (ต่ำกว่าเกณฑ์ขั้นต่ำของ Tier C)<br/>'
+            'ผลลัพธ์: ไม่ได้รับโบนัสในรอบนี้ (0%)<br/><br/>'
+            'ตาม FDD §12.4 — Tier D ต้องแจ้งเตือน HR/Fleet Manager เพื่อพิจารณา'
+            'ติดตามพฤติกรรมการขับขี่ของพนักงานคนนี้'
+        ).format(
+            driver_name=self.driver_id.name,
+            period=self.period_label,
+            score=f'{self.avg_score:.2f}',
+        )
+
+        # 1) บันทึกไว้ใน chatter ของ Incentive record เอง
+        self.message_post(body=body)
+
+        # 2) ส่งอีเมลตรงถึงกลุ่ม Fleet Manager (ทำหน้าที่ HR/ผู้อนุมัติ)
+        # แก้ 2026-07-16: เดิมใช้ managers.users ตรงๆ แต่ Odoo 19 เปลี่ยนชื่อ
+        # field ฝั่ง res.groups ไปแล้ว (error จริง: "'res.groups' object has
+        # no attribute 'users'") จึงเลี่ยงไปหาแบบ query จาก res.users แทน
+        # โดยเช็ค field ที่มีอยู่จริงก่อนใช้งาน (กันพังซ้ำถ้าเปลี่ยนชื่ออีก)
+        managers_group = self.env.ref('fleet.fleet_group_manager', raise_if_not_found=False)
+        manager_users = self.env['res.users']
+        if managers_group:
+            User = self.env['res.users']
+            group_field_candidates = ['groups_id', 'group_ids']
+            for fname in group_field_candidates:
+                if fname in User._fields:
+                    manager_users = User.sudo().search([(fname, 'in', managers_group.ids)])
+                    break
+            else:
+                _logger.warning(
+                    '_notify_hr_tier_d: หา field เชื่อมกลุ่มบน res.users ไม่เจอ '
+                    '(ลองแล้ว: %s) — ข้ามการส่งอีเมล แจ้งได้แค่ chatter เท่านั้น',
+                    group_field_candidates,
+                )
+
+        if manager_users:
+            self.message_notify(
+                partner_ids=manager_users.partner_id.ids,
+                body=body,
+                subject=f'⚠️ Tier D — {self.driver_id.name} ({self.period_label})',
+            )
+        else:
+            _logger.warning(
+                '_notify_hr_tier_d: ไม่พบผู้ใช้ในกลุ่ม Fleet Manager ที่จะแจ้งเตือน '
+                '— แจ้งเตือนได้แค่ทาง chatter ของ record นี้เท่านั้น (ใบโบนัส %s)',
+                self.id,
+            )
+
+        self.tier_d_notified = True
 
     # ============================================================
     # [F3] เพิ่ม 2026-07-09 (บรีฟข้อ 3): Bonus (THB) = Base Salary × Bonus %

@@ -68,10 +68,13 @@
                         ⚠️ ตัวเลขโบนัสนี้คำนวณจาก Local Fallback เพราะเรียก Backend ไม่สำเร็จ
                         — กด "Refresh from Backend" อีกครั้งก่อน Approve จริง
                     </div>
-                    <!-- เพิ่ม 2026-07-09 (บรีฟข้อ 3): เตือนชัดเจนเมื่อ Tier ตกไปที่ D
-                         (ไม่ได้รับโบนัส) ให้ผู้ใช้เห็นทันทีโดยไม่ต้องไปนั่งดูตัวเลข -->
+                    <!-- แก้ 2026-07-16: เดิมเช็คแค่ incentive_tier != 'D' แต่ field
+                         นี้มี default='D' ตั้งแต่สร้าง record ใหม่ (ก่อนเลือกพนักงาน/
+                         คำนวณอะไรเลย) ทำให้แถบเตือนขึ้นผิดพลาดตั้งแต่ยังเป็นฟอร์ม
+                         เปล่าๆ อยู่ เพิ่มเงื่อนไข "ต้องเลือก driver_id แล้ว" ด้วย
+                         กันไม่ให้เตือนทั้งที่ยังไม่มีข้อมูลจริงให้เตือน -->
                     <div class="alert alert-danger" role="alert"
-                         invisible="incentive_tier != 'D'">
+                         invisible="incentive_tier != 'D' or not driver_id">
                         🚫 พนักงานคนนี้ <b>ไม่ได้รับโบนัส</b> ในรอบนี้ — คะแนนเฉลี่ยต่ำกว่า
                         เกณฑ์ขั้นต่ำของ Tier C (Tier D — Needs Improvement)
                     </div>
@@ -112,10 +115,19 @@
                             <field name="bonus_pct" readonly="1"/>
                             <field name="bonus_source" readonly="1"/>
                             <field name="bonus_last_synced" readonly="1"/>
+                            <!-- เพิ่ม 2026-07-16: แสดงเฉพาะตอน Tier D เพื่อยืนยันว่า
+                                 แจ้งเตือน HR ไปแล้วตาม FDD §12.4 -->
+                            <field name="tier_d_notified" readonly="1"
+                                   invisible="incentive_tier != 'D'"
+                                   string="แจ้งเตือน HR แล้ว"/>
                         </group>
                         <group>
                             <!-- base_salary ดึงจาก hr.contract (สัญญาจ้าง) อัตโนมัติ -->
-                            <field name="base_salary" string="Base Salary (จาก hr.contract)" readonly="1"/>
+                            <!-- แก้ 2026-07-16: เดิม readonly="1" ตายตัว ทำให้พิมพ์ Base
+                                 Salary ไม่ได้แม้อยู่สถานะ Draft — เปลี่ยนเป็น readonly="is_locked"
+                                 ให้ตรงกับ pattern เดียวกับ driver_id/date_from/date_to ข้างบน
+                                 (แก้ไขได้ตอน Draft เท่านั้น ล็อกถาวรหลัง Confirm) -->
+                            <field name="base_salary" string="Base Salary (จาก hr.contract)" readonly="is_locked"/>
                             <!-- bonus_amount เป็น compute field แล้ว (บรีฟข้อ 3)
                                  = Base Salary × Bonus % เสมอ แก้ตรงๆ ไม่ได้ -->
                             <field name="bonus_amount" readonly="1"/>
