@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   views/telematics_sync_wizard_views.xml
-  (เพิ่มใหม่ 2026-07) — Manual Sync Wizard ตาม FDD §12.1
+  หน้าต่างให้ Admin สั่ง Sync ทริปจาก Backend เองได้ทันที ไม่ต้องรอ Cron
+  อัตโนมัติ (ทุก 5 นาที) — ดู wizards/sync_wizard.py
 -->
 <odoo>
 

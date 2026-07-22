@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   views/hr_employee_ext_views.xml
-  (เพิ่มใหม่ 2026-07) เปิดให้กรอก telematics_base_salary บนฟอร์มพนักงาน
-  จำเป็นเฉพาะกรณีที่ระบบไม่มีโมดูล hr_contract ติดตั้งอยู่ (ดู
-  models/hr_employee_ext.py และ docs/known_risks.md)
+  เพิ่มกล่องกรอกฐานเงินเดือนสำรอง (telematics_base_salary) ในฟอร์มพนักงาน
+  ใช้เฉพาะกรณีที่ระบบไม่มีข้อมูลสัญญาจ้าง (hr.version/hr.contract) ของ
+  พนักงานคนนั้น — ดู models/hr_employee_ext.py
 -->
 <odoo>
 
@@ -18,10 +18,11 @@
                     <field name="telematics_base_salary"/>
                     <div class="text-muted" colspan="2">
                         ใช้คำนวณ Incentive/Bonus ของระบบ Fleet Telematics
-                        เท่านั้น — จำเป็นเฉพาะกรณีที่ระบบไม่มีโมดูล
-                        hr_contract ติดตั้งอยู่ (ถ้ามี hr_contract และมี
-                        สัญญาจ้าง active อยู่แล้ว ระบบจะใช้ค่าจากที่นั่นก่อน
-                        เป็นหลัก ไม่ต้องกรอกซ้ำที่นี่)
+                        เท่านั้น — ระบบจะดึงเงินเดือนจากสัญญาจ้างพนักงาน
+                        (hr.version ใน Odoo 19 หรือ hr.contract ในเวอร์ชัน
+                        เก่ากว่า) เป็นหลักก่อนเสมอถ้ามีข้อมูลอยู่ ช่องนี้
+                        เป็นแค่ทางเลือกสำรองสำหรับกรณีที่ไม่มีข้อมูล
+                        สัญญาจ้างในระบบเลย
                     </div>
                 </group>
             </xpath>

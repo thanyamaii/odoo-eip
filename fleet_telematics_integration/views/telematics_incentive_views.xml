@@ -3,7 +3,8 @@
   views/telematics_incentive_views.xml
   หน้าจออนุมัติเงินโบนัสพนักงานของ HR
   Workflow: [ Confirm ] → [ Approve ] → [ Mark as Paid ]
-  เชื่อมโยงกับ hr.contract เพื่อดึงเงินเดือนฐานจริง
+  ดึงฐานเงินเดือนจากสัญญาจ้างพนักงาน (hr.version) — ดู
+  models/telematics_incentive.py
 -->
 <odoo>
 
@@ -38,7 +39,6 @@
         <field name="arch" type="xml">
             <form>
                 <header>
-                    <!-- Workflow Buttons -->
                     <button name="action_confirm"   string="Confirm"   type="object"
                             class="btn-primary"   invisible="state != 'draft'"/>
                     <button name="action_approve"   string="Approve"   type="object"
@@ -47,14 +47,12 @@
                             class="btn-success"   invisible="state != 'approved'"/>
                     <button name="action_reset"     string="Reset"     type="object"
                             class="btn-secondary" invisible="state not in ('confirmed','approved')"/>
-                    <!-- แก้ 2026-07-09 (บรีฟข้อ 5): เดิมโชว์ทั้ง draft และ
-                         confirmed — ต้องโชว์เฉพาะ Draft เท่านั้น ป้องกันดึง
-                         ข้อมูลซ้ำเปลี่ยนตัวเลขหลัง Confirm ไปแล้ว -->
+                    <!-- แสดงเฉพาะตอน Draft — ป้องกันดึงข้อมูลซ้ำเปลี่ยนตัวเลข
+                         หลัง Confirm ไปแล้ว -->
                     <button name="action_refresh_bonus_from_backend" string="Refresh from Backend"
                             type="object" class="btn-secondary"
                             invisible="state != 'draft'"
                             help="ดึง bonus_pct ล่าสุดจาก GET /drivers/{id}/bonus ใหม่"/>
-                    <!-- เพิ่ม 2026-07-09 (บรีฟข้อ 4): ส่งออกสรุปผลไปยัง Appraisal -->
                     <button name="action_export_to_appraisal" string="📤 Export to Appraisal"
                             type="object" class="btn-secondary"
                             invisible="state not in ('approved', 'paid')"
@@ -68,17 +66,15 @@
                         ⚠️ ตัวเลขโบนัสนี้คำนวณจาก Local Fallback เพราะเรียก Backend ไม่สำเร็จ
                         — กด "Refresh from Backend" อีกครั้งก่อน Approve จริง
                     </div>
-                    <!-- แก้ 2026-07-16: เดิมเช็คแค่ incentive_tier != 'D' แต่ field
-                         นี้มี default='D' ตั้งแต่สร้าง record ใหม่ (ก่อนเลือกพนักงาน/
-                         คำนวณอะไรเลย) ทำให้แถบเตือนขึ้นผิดพลาดตั้งแต่ยังเป็นฟอร์ม
-                         เปล่าๆ อยู่ เพิ่มเงื่อนไข "ต้องเลือก driver_id แล้ว" ด้วย
-                         กันไม่ให้เตือนทั้งที่ยังไม่มีข้อมูลจริงให้เตือน -->
+                    <!-- ต้องเช็คว่าเลือก driver_id แล้วด้วย ไม่ใช่แค่ tier=='D'
+                         เพราะ field นี้มี default='D' ตั้งแต่สร้าง record ใหม่
+                         (ก่อนเลือกพนักงาน/คำนวณอะไรเลย) กันแถบเตือนขึ้นผิด
+                         จังหวะตั้งแต่ยังเป็นฟอร์มเปล่าอยู่ -->
                     <div class="alert alert-danger" role="alert"
                          invisible="incentive_tier != 'D' or not driver_id">
                         🚫 พนักงานคนนี้ <b>ไม่ได้รับโบนัส</b> ในรอบนี้ — คะแนนเฉลี่ยต่ำกว่า
                         เกณฑ์ขั้นต่ำของ Tier C (Tier D — Needs Improvement)
                     </div>
-                    <!-- เพิ่ม 2026-07-09 (บรีฟข้อ 5): แถบเตือนล็อกฟอร์มถาวร -->
                     <div class="alert alert-info" role="alert" invisible="not is_locked">
                         🔒 ใบโบนัสนี้ผ่านสถานะ Draft ไปแล้ว — แก้ไขข้อมูลไม่ได้
                         กด "Reset" กลับเป็น Draft ก่อนถ้าต้องการแก้ไข
@@ -86,18 +82,16 @@
                     <group>
                         <group string="ข้อมูลพนักงาน">
                             <field name="driver_id" readonly="is_locked"/>
-                            <!-- แก้ 2026-07-09 (บรีฟข้อ 1): เปลี่ยนจากเลือก
-                                 เดือน/ปีแยก เป็นช่วงวันที่ยืดหยุ่น รองรับ
-                                 รอบตัดวิกที่ไม่ตรงเดือนปฏิทิน -->
+                            <!-- ใช้ช่วงวันที่แทนเลือกเดือน/ปีแยก รองรับรอบตัดวิก
+                                 ที่ไม่ตรงเดือนปฏิทิน -->
                             <field name="date_from" string="วันที่เริ่มต้น" readonly="is_locked"/>
                             <field name="date_to"   string="วันที่สิ้นสุด" readonly="is_locked"/>
                             <field name="period_label" readonly="1"/>
                             <field name="scoring_config_id" readonly="is_locked"/>
                             <field name="approved_by" readonly="1"/>
                         </group>
-                        <!-- บรีฟข้อ 2: ล็อก readonly="1" ถาวรทุกฟิลด์สรุปผลงาน
-                             เปลี่ยนค่าได้ทางเดียวคือกดปุ่ม Refresh from Backend
-                             เท่านั้น ผู้ใช้พิมพ์แก้เองจากฟอร์มไม่ได้เลย -->
+                        <!-- ล็อก readonly="1" ถาวรทุกฟิลด์สรุปผลงาน เปลี่ยนค่าได้
+                             ทางเดียวคือกดปุ่ม Refresh from Backend เท่านั้น -->
                         <group string="สรุปผลรายเดือน (Monthly Performance Summary)">
                             <field name="total_trips" readonly="1"/>
                             <field name="total_distance_km" readonly="1"/>
@@ -115,30 +109,27 @@
                             <field name="bonus_pct" readonly="1"/>
                             <field name="bonus_source" readonly="1"/>
                             <field name="bonus_last_synced" readonly="1"/>
-                            <!-- เพิ่ม 2026-07-16: แสดงเฉพาะตอน Tier D เพื่อยืนยันว่า
-                                 แจ้งเตือน HR ไปแล้วตาม FDD §12.4 -->
+                            <!-- แสดงเฉพาะตอน Tier D เพื่อยืนยันว่าแจ้งเตือน HR ไปแล้ว -->
                             <field name="tier_d_notified" readonly="1"
                                    invisible="incentive_tier != 'D'"
                                    string="แจ้งเตือน HR แล้ว"/>
                         </group>
                         <group>
-                            <!-- base_salary ดึงจาก hr.contract (สัญญาจ้าง) อัตโนมัติ -->
-                            <!-- แก้ 2026-07-16: เดิม readonly="1" ตายตัว ทำให้พิมพ์ Base
-                                 Salary ไม่ได้แม้อยู่สถานะ Draft — เปลี่ยนเป็น readonly="is_locked"
-                                 ให้ตรงกับ pattern เดียวกับ driver_id/date_from/date_to ข้างบน
-                                 (แก้ไขได้ตอน Draft เท่านั้น ล็อกถาวรหลัง Confirm) -->
-                            <field name="base_salary" string="Base Salary (จาก hr.contract)" readonly="is_locked"/>
-                            <!-- bonus_amount เป็น compute field แล้ว (บรีฟข้อ 3)
+                            <!-- ดึงจากสัญญาจ้างพนักงานอัตโนมัติ (hr.version) แต่
+                                 แก้ไขเองได้ตอน Draft เท่านั้น (readonly=is_locked
+                                 ให้ pattern เดียวกับ field อื่นด้านบน) -->
+                            <field name="base_salary" string="Base Salary (จากสัญญาจ้าง)" readonly="is_locked"/>
+                            <!-- bonus_amount เป็น compute field ตายตัว
                                  = Base Salary × Bonus % เสมอ แก้ตรงๆ ไม่ได้ -->
                             <field name="bonus_amount" readonly="1"/>
                         </group>
                     </group>
                     <field name="note" placeholder="หมายเหตุ..." readonly="is_locked"/>
                 </sheet>
-                <!-- UC-10 Audit Log — บันทึกทุกครั้งที่ state เปลี่ยน
-                     (draft→confirmed→approved→paid) พร้อมชื่อผู้ทำรายการ
-                     และเวลา อัตโนมัติผ่าน mail.thread (ดู tracking=True
-                     บน field state + message_post ใน action_* ทุกตัว) -->
+                <!-- Audit Log — บันทึกทุกครั้งที่ state เปลี่ยน (draft→confirmed→
+                     approved→paid) พร้อมชื่อผู้ทำรายการและเวลา อัตโนมัติผ่าน
+                     mail.thread (ดู tracking=True บน field state + message_post
+                     ใน action_* ทุกตัวใน telematics_incentive.py) -->
                 <chatter/>
             </form>
         </field>
@@ -186,10 +177,10 @@
         <field name="view_mode">graph,pivot,list</field>
     </record>
 
-    <!-- [แก้ไข 2026-07-06] Reports > Incentive Summary เดิมชี้ไป action
-         เดียวกับ Dashboard > Incentive Overview เป๊ะ — แยก action ใหม่ให้
-         Reports โดยเฉพาะ: เรียง list ก่อน (เหมาะกับงาน HR export/ตรวจสอบ)
-         และ group by สถานะอนุมัติ (state) แทนที่จะเป็นกราฟภาพรวมอย่างเดียว -->
+    <!-- Reports > Incentive Summary — action แยกต่างหากจาก Dashboard >
+         Incentive Overview (โมเดลเดียวกัน แต่มุมมองต่างกัน): เรียง list
+         ก่อน (เหมาะกับงาน HR export/ตรวจสอบ) และ group by สถานะอนุมัติ
+         (state) แทนที่จะเป็นกราฟภาพรวมอย่างเดียว -->
     <record id="action_telematics_report_incentive_summary" model="ir.actions.act_window">
         <field name="name">Incentive Summary</field>
         <field name="res_model">fleet.telematics.incentive</field>

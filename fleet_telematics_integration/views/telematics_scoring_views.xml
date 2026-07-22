@@ -85,6 +85,17 @@
                         </group>
                     </group>
 
+                    <!-- History — track ว่า config นี้ถูกใช้กับกี่ trip แล้ว -->
+                    <group string="📊 History">
+                        <group>
+                            <field name="created_date" readonly="1"/>
+                            <field name="last_used_date" readonly="1"/>
+                        </group>
+                        <group>
+                            <field name="total_trips_calculated" readonly="1"/>
+                        </group>
+                    </group>
+
                     <!-- ข้อมูลทั่วไป -->
                     <group string="ข้อมูลทั่วไป">
                         <group>
@@ -110,7 +121,7 @@
                                 <group string="Speed &amp; Idle">
                                     <field name="speeding_kmh_over" readonly="is_locked"/>
                                     <field name="idle_min_threshold" readonly="is_locked"/>
-                                    <!-- เพิ่ม 2026-07-08: กฎความเร็วแยกโซน (บรีฟข้อ 2) -->
+                                    <!-- ความเร็วจำกัดแยกโซน กทม./นอกเมือง -->
                                     <field name="speed_limit_bkk" readonly="is_locked"/>
                                     <field name="speed_limit_upcountry" readonly="is_locked"/>
                                 </group>
@@ -147,8 +158,13 @@
                                     <field name="tier_c_bonus_pct" readonly="is_locked"/>
                                 </group>
                                 <group string="Tier D — Needs Improvement">
+                                    <field name="tier_d_min_score" readonly="is_locked"/>
+                                    <field name="tier_d_bonus_pct" readonly="is_locked"/>
                                     <span class="text-muted fst-italic">
-                                        คะแนนต่ำกว่า Tier C — ไม่ได้รับโบนัส (0%)
+                                        ปกติ 0% ตามสเปค — คะแนนต่ำกว่า Tier C
+                                        ทั้งหมดถือเป็น Tier D เสมอ (min_score
+                                        เก็บไว้เพื่อความสอดคล้อง ไม่ได้ใช้
+                                        เทียบในการจัด tier จริง)
                                     </span>
                                 </group>
                             </group>

@@ -24,9 +24,10 @@
     </record>
 
     <!-- Event Log: driver เห็นเฉพาะ event ของทริปตัวเอง
-         แก้ 2026-07-08: event model มี driver_id (related+store) ตรงๆ อยู่แล้ว
-         (ดู models/telematics_event.py) ใช้ single-hop domain แทน
-         trip_id.driver_id.user_id เดิม (double-hop) ปลอดภัยกว่า -->
+         Event model มี driver_id (related+store ตรงจาก trip_id.driver_id)
+         อยู่บนตัวเองแล้ว (ดู models/telematics_event.py) จึงอ้างอิงผ่าน
+         driver_id.user_id ได้เลย ไม่ต้องอ้อมผ่าน trip_id.driver_id.user_id
+         แบบเดิม -->
     <record id="rule_telematics_event_own_only" model="ir.rule">
         <field name="name">Telematics Event: Driver เห็นเฉพาะ event ของตัวเอง</field>
         <field name="model_id" ref="model_fleet_telematics_event"/>
@@ -39,14 +40,13 @@
     </record>
 
     <!-- Incentive: driver เห็นเฉพาะโบนัส/คะแนนของตัวเอง
-         (คู่กับการปิด perm_read ฝั่ง ir.model.access.csv ที่แก้ไปแล้วก่อนหน้านี้
-          — ถ้าในอนาคตเปิด perm_read ให้ user อีกครั้ง rule นี้จะคุมไม่ให้เห็นข้ามคน)
+         (คู่กับการปิด perm_read ฝั่ง ir.model.access.csv — ถ้าในอนาคตเปิด
+          perm_read ให้ user อีกครั้ง rule นี้จะคุมไม่ให้เห็นข้ามคน)
 
-         แก้ 2026-07-08: เดิม domain ใช้ [('driver_id.user_id', '=', user.id)]
-         แบบ dotted-path ตรงๆ แล้ว upgrade module พัง (ParseError เฉพาะโมเดลนี้
-         โมเดลอื่น shape เดียวกันไม่พัง) — เปลี่ยนมาใช้ driver_user_id ซึ่งเป็น
-         related+store field แบบ flat (เพิ่มไว้ใน models/telematics_incentive.py)
-         ตัดปัญหา multi-hop path validation ของ ir.rule ไปเลย -->
+         ใช้ driver_user_id (related+store field แบบ flat บน
+         fleet.telematics.incentive โดยตรง — ดู models/telematics_incentive.py)
+         แทนการเขียน domain แบบ dotted-path หลายชั้น (driver_id.user_id)
+         ตรงๆ ซึ่งเคยทำให้ ir.rule ของโมเดลนี้ parse ไม่ผ่านตอน upgrade -->
     <record id="rule_telematics_incentive_own_only" model="ir.rule">
         <field name="name">Telematics Incentive: Driver เห็นเฉพาะของตัวเอง</field>
         <field name="model_id" ref="model_fleet_telematics_incentive"/>

@@ -2,13 +2,8 @@
 <!--
   views/telematics_event_views.xml
   หน้าจอแสดงประวัติพฤติกรรมเสี่ยงรวม (Event Logs) — READ-ONLY ทั้งหมด
-  ใช้ Filter / Group By แทนการแยกหน้าจอ:
-    - Harsh Brake / Speeding / Harsh Acceleration / Harsh Corner / Idling / Bump
-
-  แก้ 2026-07-08:
-    ข้อ 1) form/list ปิด create/edit/delete ระดับ view (ควบคู่กับ ACL +
-           create()/write()/unlink() override ในโมเดล — ล็อก 3 ชั้น)
-    ข้อ 3) เพิ่ม Group By: Driver / Vehicle / Event Type ในหน้า list และ search
+  ล็อกไว้ 3 ชั้น (view นี้ + ACL + create/write/unlink override ในโมเดล)
+  ดู models/telematics_event.py
 -->
 <odoo>
 

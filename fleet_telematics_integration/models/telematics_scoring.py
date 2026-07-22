@@ -1,5 +1,12 @@
 # ==============================================================================
 # models/telematics_scoring.py
+#
+# เกณฑ์คะแนนพฤติกรรมการขับขี่ (Scoring Config) — Admin ปรับน้ำหนักคะแนน/
+# threshold ต่างๆ ได้เองจากหน้าจอ ไม่ต้องแก้โค้ด แล้วกด Push ส่งเกณฑ์นี้ไป
+# ให้ Backend ใช้คำนวณคะแนนจริงตอนประมวลผลทริป
+#
+# workflow: สร้าง (Active=False) → กรอกเกณฑ์ → Approve (ต้องเป็น Fleet
+# Manager) → Push Config → เปิด Active (ล็อกฟอร์มถาวรจนกว่าจะปิด Active)
 # ==============================================================================
 import logging
 import requests
@@ -11,22 +18,22 @@ _logger = logging.getLogger(__name__)
 
 
 class TelematicsScoringConfig(models.Model):
+    """เกณฑ์คะแนน 1 ชุด — อนุญาตให้ Active พร้อมกันได้แค่ชุดเดียวในระบบ"""
     _name        = 'fleet.telematics.scoring.config'
     _description = 'Fleet Telematics Scoring Configuration'
     _order       = 'effective_date desc'
 
-    # [A] ข้อมูลระบุ Config
     name           = fields.Char(string='Config Name', required=True)
     active         = fields.Boolean(string='Active', default=False,
         help='Active ได้เพียง 1 config เท่านั้น — ตอนสร้างใหม่ต้องปิดไว้ก่อน '
              'เพื่อให้กรอกข้อมูลและทดสอบ Push ได้ก่อนเปิดใช้งานจริง')
     effective_date = fields.Date(string='Effective Date', required=True)
 
-    # [B] คะแนนพื้นฐาน
+    # ── คะแนนพื้นฐาน ────────────────────────────────────────────────────
     score_base          = fields.Float(string='Base Score (เต็ม)', default=100.0)
     max_deduct_per_trip = fields.Float(string='Max Deduct / Trip', default=50.0)
 
-    # [C] ค่าหักคะแนน
+    # ── คะแนนที่หักต่อครั้งของแต่ละพฤติกรรม ─────────────────────────────
     harsh_brake_deduct  = fields.Float(string='Harsh Brake Deduct',  default=5.0)
     harsh_accel_deduct  = fields.Float(string='Harsh Accel Deduct',  default=3.0)
     harsh_corner_deduct = fields.Float(string='Harsh Corner Deduct', default=3.0)
@@ -34,18 +41,18 @@ class TelematicsScoringConfig(models.Model):
     idling_deduct       = fields.Float(string='Idling Deduct',       default=2.0)
     bump_deduct         = fields.Float(string='Bump Deduct',         default=4.0)
 
-    # [D] Threshold
+    # ── เกณฑ์ตัดสินว่าเป็นพฤติกรรมเสี่ยงหรือไม่ ──────────────────────────
     harsh_brake_g      = fields.Float(string='Brake G Threshold',         default=0.40)
     harsh_accel_g      = fields.Float(string='Accel G Threshold',         default=0.40)
     harsh_corner_g     = fields.Float(string='Corner G Threshold',        default=0.40)
     speeding_kmh_over  = fields.Float(string='Speeding (km/h เกินกำหนด)', default=20.0)
     idle_min_threshold = fields.Float(string='Idle Min Threshold (min)',   default=5.0)
 
-    # [D2] เพิ่ม 2026-07-08 — ตามบรีฟ: กฎจำกัดความเร็วแยกโซน (กทม./นอกเมือง)
-    # ส่งค่าชุดนี้ไปพร้อม Push Config เพื่อให้ Event Processor ฝั่ง Backend
-    # ใช้ตัดสินว่า event ไหน "speeding" ตามโซนที่รถวิ่งอยู่จริง — ทำงานคู่กับ
-    # zone_label/speed_limit_kmh ที่คำนวณไว้แล้วบน fleet.telematics.event
-    # (models/telematics_event.py) ฝั่ง Odoo เพื่อ cross-check/audit ย้อนหลัง
+    # ── ความเร็วจำกัดแยกโซน (กทม./นอกเมือง) ──────────────────────────────
+    # ส่งไปพร้อม Push Config ให้ Backend ใช้ตัดสินว่า event ไหนนับเป็น
+    # "speeding" ตามโซนที่รถวิ่งอยู่จริง — ทำงานคู่กับ zone_label/
+    # speed_limit_kmh ที่คำนวณไว้บน fleet.telematics.event ฝั่ง Odoo เพื่อ
+    # cross-check ย้อนหลังได้
     speed_limit_bkk = fields.Float(
         string='ความเร็วจำกัดในกรุงเทพฯ (km/h)', default=80.0,
         help='ใช้กับ event ที่พิกัดอยู่ในเขตกรุงเทพฯ')
@@ -53,33 +60,52 @@ class TelematicsScoringConfig(models.Model):
         string='ความเร็วจำกัดนอกเมือง (km/h)', default=90.0,
         help='ใช้กับ event ที่พิกัดอยู่นอกเขตกรุงเทพฯ')
 
-    # [E] Tier
+    # ── เกณฑ์ Tier และ % โบนัส ────────────────────────────────────────────
     tier_a_min_score = fields.Float(string='Tier A — Min Score', default=90.0)
     tier_a_bonus_pct = fields.Float(string='Tier A — Bonus %',  default=10.0)
     tier_b_min_score = fields.Float(string='Tier B — Min Score', default=75.0)
     tier_b_bonus_pct = fields.Float(string='Tier B — Bonus %',  default=5.0)
     tier_c_min_score = fields.Float(string='Tier C — Min Score', default=60.0)
     tier_c_bonus_pct = fields.Float(string='Tier C — Bonus %',  default=0.0)
+    # เพิ่มตาม FDD §12.3 — ตาราง Tier ระบุว่า Admin ปรับ Tier D ได้เหมือน
+    # A/B/C ทุกประการ (เดิมโค้ด hardcode Tier D ไว้เป็น fallback ในลอจิก
+    # ไม่ใช่ field ที่ปรับได้จาก UI)
+    #
+    # tier_d_min_score: ปกติควรเป็น 0 เสมอ (นิยาม: คะแนนต่ำกว่า Tier C
+    # ทั้งหมดคือ D อยู่แล้ว) เก็บเป็น field ให้แก้ไขได้เพื่อความสอดคล้องกับ
+    # สเปคเท่านั้น — ไม่มีจุดไหนในโค้ดเทียบค่านี้จริง
+    #
+    # tier_d_bonus_pct: มีผลจริงทั้ง 2 เส้นทาง — (1) ถูกส่งไป Backend ผ่าน
+    # _build_config_payload() ให้ Backend ใช้คำนวณเมื่อเชื่อมต่อสำเร็จ และ
+    # (2) ถูกอ่านโดย telematics_incentive.py: _local_tier_from_score()
+    # เป็น fallback ตอนเรียก Backend ไม่สำเร็จด้วย (ปกติตั้งเป็น 0% ตาม FDD
+    # แต่ Admin ปรับเป็นค่าอื่นได้ถ้าต้องการ)
+    tier_d_min_score = fields.Float(string='Tier D — Min Score', default=0.0)
+    tier_d_bonus_pct = fields.Float(string='Tier D — Bonus %',  default=0.0)
 
-    # [F] สถานะ Push
+    # ── History (readonly) — ตาม FDD §12.5: track ว่า config นี้ถูกใช้กับ
+    # กี่ trip แล้ว ต่างจาก last_push_at/last_push_status ที่ track แค่การ
+    # ส่งไป Backend เท่านั้น ไม่ใช่การใช้งานจริง ──────────────────────────
+    created_date = fields.Datetime(
+        string='Created Date', readonly=True,
+        default=lambda self: fields.Datetime.now())
+    last_used_date = fields.Datetime(
+        string='Last Used Date', readonly=True,
+        help='วันเวลาล่าสุดที่มี Trip ใช้ config ชุดนี้คำนวณคะแนน')
+    total_trips_calculated = fields.Integer(
+        string='Total Trips Calculated', readonly=True, default=0,
+        help='จำนวน Trip สะสมที่เคยใช้ config ชุดนี้คำนวณคะแนนแล้ว')
+
     last_push_at     = fields.Datetime(string='Last Pushed At', readonly=True)
     last_push_status = fields.Char(string='Push Status',        readonly=True)
 
-    # [F2] เพิ่ม 2026-07-08 — ผู้อนุมัติเกณฑ์คะแนน (ตามบรีฟข้อ "กำหนดผู้อนุมัติ")
-    # ต้องอนุมัติก่อนถึงจะกด Push Config ไป Backend ได้จริง (บังคับใน
-    # action_push_to_backend ด้านล่าง) — เขียนได้เฉพาะกลุ่ม Fleet Manager
+    # ต้องอนุมัติก่อนถึงจะ Push Config ไป Backend ได้จริง (บังคับใน
+    # action_push_to_backend) — อนุมัติได้เฉพาะกลุ่ม Fleet Manager
     approved_by_id = fields.Many2one(
         'res.users', string='ผู้อนุมัติ', readonly=True,
         help='ผู้มีอำนาจอนุมัติเกณฑ์คะแนนชุดนี้ก่อนนำไปใช้จริง')
     approved_at = fields.Datetime(string='วันที่อนุมัติ', readonly=True)
 
-    # [F3] ล็อกฟอร์มอัตโนมัติเมื่อ Active หรือเคย Push แล้ว (ตามบรีฟข้อ 3)
-    # [F3] ล็อกฟอร์มอัตโนมัติเมื่อ Active เท่านั้น (แก้ 2026-07-09 ตามบรีฟใหม่)
-    # เดิมล็อกด้วย active OR last_push_at ทำให้แก้ไขไม่ได้ตลอดไปหลัง Push
-    # ครั้งแรกแม้จะปิด Active แล้วก็ตาม — ผิดจากที่ต้องการ (บรีฟระบุชัดว่า
-    # "ตราบใดที่ Active ยังเป็น False ต้องปล่อยให้ Fleet Manager แก้ไขค่าเกณฑ์
-    # และกด Push อัปเดตไปหลังบ้านได้เรื่อยๆ") จึงตัด last_push_at ออกจาก
-    # เงื่อนไขล็อก เหลือแค่ active เพียงอย่างเดียว
     is_locked = fields.Boolean(
         string='ล็อกการแก้ไข', compute='_compute_is_locked',
         help='True เมื่อ Active=True เท่านั้น — ฟิลด์เกณฑ์ทั้งหมดจะแก้ไขไม่ได้ '
@@ -90,11 +116,11 @@ class TelematicsScoringConfig(models.Model):
         for rec in self:
             rec.is_locked = bool(rec.active)
 
-    # ============================================================
-    # [G] Constraints
-    # ============================================================
+    # ── ตรวจสอบความสมเหตุสมผลของค่าที่กรอก ──────────────────────────────
+
     @api.constrains('active')
     def _check_single_active(self):
+        """ห้ามมี Config ที่ Active=True พร้อมกันเกิน 1 ชุดในระบบ"""
         for rec in self:
             if rec.active:
                 others = self.search([('active', '=', True), ('id', '!=', rec.id)])
@@ -106,9 +132,19 @@ class TelematicsScoringConfig(models.Model):
 
     @api.constrains('tier_a_min_score', 'tier_b_min_score', 'tier_c_min_score')
     def _check_tier_order(self):
+        """เกณฑ์คะแนนขั้นต่ำต้องเรียงจากมากไปน้อย A > B > C > 0 เสมอ
+        (Tier D คือทุกคะแนนที่ต่ำกว่า C ลงไป — tier_d_min_score เป็นแค่
+        field เก็บไว้ให้ Admin เห็น ไม่ได้ใช้เทียบในการจัด tier จริง)"""
         for rec in self:
             if not (rec.tier_a_min_score > rec.tier_b_min_score > rec.tier_c_min_score > 0):
                 raise ValidationError('Tier min score ต้องเรียงจากมากไปน้อย: A > B > C > 0')
+
+    @api.constrains('tier_d_bonus_pct')
+    def _check_tier_d_bonus_not_negative(self):
+        """% โบนัส Tier D ต้องไม่ติดลบ (ปกติ 0% ตาม FDD แต่ห้ามติดลบ)"""
+        for rec in self:
+            if rec.tier_d_bonus_pct < 0:
+                raise ValidationError('Tier D — Bonus % ต้องไม่ติดลบ')
 
     @api.constrains(
         'harsh_brake_deduct', 'harsh_accel_deduct', 'harsh_corner_deduct',
@@ -116,6 +152,7 @@ class TelematicsScoringConfig(models.Model):
         'score_base', 'max_deduct_per_trip',
     )
     def _check_positive_deducts(self):
+        """คะแนนหักทุกประเภทต้อง >= 0 และคะแนนเต็มต้อง > 0"""
         deduct_fields = [
             ('harsh_brake_deduct',  'Harsh Brake Deduct'),
             ('harsh_accel_deduct',  'Harsh Accel Deduct'),
@@ -135,6 +172,7 @@ class TelematicsScoringConfig(models.Model):
     @api.constrains('harsh_brake_g', 'harsh_accel_g', 'harsh_corner_g',
                     'speeding_kmh_over', 'idle_min_threshold')
     def _check_positive_thresholds(self):
+        """threshold ตรวจจับพฤติกรรมเสี่ยงทุกตัวต้องมากกว่า 0"""
         threshold_fields = [
             ('harsh_brake_g',      'Brake G Threshold'),
             ('harsh_accel_g',      'Accel G Threshold'),
@@ -149,6 +187,7 @@ class TelematicsScoringConfig(models.Model):
 
     @api.constrains('speed_limit_bkk', 'speed_limit_upcountry')
     def _check_speed_limit_zone(self):
+        """ความเร็วจำกัดต้องมากกว่า 0 และในกรุงเทพฯ ต้องไม่สูงกว่านอกเมือง"""
         for rec in self:
             if rec.speed_limit_bkk <= 0 or rec.speed_limit_upcountry <= 0:
                 raise ValidationError('ความเร็วจำกัดตามโซน (กรุงเทพฯ/นอกเมือง) ต้องมากกว่า 0')
@@ -160,24 +199,18 @@ class TelematicsScoringConfig(models.Model):
 
     @api.constrains('score_base', 'max_deduct_per_trip')
     def _check_max_deduct_not_exceed_base(self):
+        """หักคะแนนสูงสุดต่อทริปต้องไม่เกินคะแนนเต็ม"""
         for rec in self:
             if rec.max_deduct_per_trip > rec.score_base:
                 raise ValidationError(
                     f'Max Deduct / Trip ({rec.max_deduct_per_trip}) ต้องไม่เกิน Base Score ({rec.score_base})'
                 )
 
-    # ============================================================
-    # [G2] เพิ่ม 2026-07-08 (แก้ 2026-07-09 ตามบรีฟใหม่) — ล็อกฟิลด์เกณฑ์
-    # ทั้งหมดเมื่อ Active=True เท่านั้น (ตามบรีฟข้อ 4 "Data Security")
-    #
+    # ── ล็อกฟิลด์เกณฑ์คะแนนทั้งหมดเมื่อ Active=True ──────────────────────
     # นี่คือชั้น Python (บังคับจริงแม้เรียกผ่าน API/RPC ตรงๆ) ส่วนชั้น XML
-    # (attrs readonly บนฟอร์ม) อยู่ที่ views/telematics_scoring_views.xml
-    #
-    # ไม่ล็อก field สถานะ (last_push_at, last_push_status, approved_by_id,
-    # approved_at, is_locked) และไม่ล็อก 'active' เอง — ผู้ใช้ต้องปิด
-    # Active ได้เพื่อปลดล็อกฟิลด์อื่น — ตอน Active=False แก้ไข/Push ซ้ำ
-    # ได้เรื่อยๆ แม้เคย Push ไปแล้วก่อนหน้านี้ก็ตาม
-    # ============================================================
+    # (readonly บนฟอร์ม) อยู่ที่ views/telematics_scoring_views.xml — ไม่ล็อก
+    # field สถานะ (last_push_at, approved_by_id ฯลฯ) และไม่ล็อก 'active' เอง
+    # เพื่อให้ผู้ใช้ปิด Active ปลดล็อกฟิลด์อื่นได้เสมอ
     _LOCKED_CONFIG_FIELDS = {
         'name', 'effective_date',
         'score_base', 'max_deduct_per_trip',
@@ -189,6 +222,7 @@ class TelematicsScoringConfig(models.Model):
         'tier_a_min_score', 'tier_a_bonus_pct',
         'tier_b_min_score', 'tier_b_bonus_pct',
         'tier_c_min_score', 'tier_c_bonus_pct',
+        'tier_d_min_score', 'tier_d_bonus_pct',
     }
 
     def write(self, vals):
@@ -203,12 +237,8 @@ class TelematicsScoringConfig(models.Model):
                     )
         return super().write(vals)
 
-    # ============================================================
-    # [G3] เพิ่ม 2026-07-08 — Approve Config (ตามบรีฟ "กำหนดผู้อนุมัติ")
-    # เฉพาะ group_fleet_manager กดอนุมัติได้ — ต้องอนุมัติก่อนถึงจะ Push
-    # ไป Backend ได้จริง (เช็คใน action_push_to_backend ด้านล่าง)
-    # ============================================================
     def action_approve(self):
+        """อนุมัติเกณฑ์คะแนนชุดนี้ — เฉพาะกลุ่ม Fleet Manager กดได้"""
         self.ensure_one()
         if not self.env.user.has_group('fleet.fleet_group_manager'):
             raise UserError('เฉพาะ Fleet Manager เท่านั้นที่มีสิทธิ์อนุมัติ Scoring Config')
@@ -226,12 +256,9 @@ class TelematicsScoringConfig(models.Model):
             },
         }
 
-    # ============================================================
-    # [H] Helper — ดึง Base URL ที่ถูกต้อง
-    # รองรับทั้ง "http://192.168.1.43:8001"
-    #          และ "http://192.168.1.43:8001/api/v1" (กรอก path เกินมา)
-    # ============================================================
     def _get_base_url(self):
+        """ดึง Base URL ของ Backend มาจาก config พร้อมตัด path ที่กรอกเกินมา
+        (เช่นกรอก .../api/v1 มาด้วย) ให้เหลือแค่ scheme+host+port"""
         ICP     = self.env['ir.config_parameter'].sudo()
         api_url = ICP.get_param('fleet_telematics.mtd_api_url', '').rstrip('/')
         if not api_url:
@@ -240,25 +267,15 @@ class TelematicsScoringConfig(models.Model):
                 'ไปที่ Fleet Telematics → Settings แล้วกรอก:\n'
                 'http://192.168.1.43:8001'
             )
-        # ถ้ากรอก URL มี /api/v1 ต่อท้ายอยู่แล้ว → ตัดออก ป้องกัน path ซ้ำ
         for suffix in ['/api/v1', '/api']:
             if api_url.endswith(suffix):
                 api_url = api_url[: -len(suffix)]
                 break
         return api_url
 
-    # ============================================================
-    # [I] สร้าง Payload ตาม Backend spec
-    # POST http://192.168.1.43:8001/api/v1/config/scoring
-    #
-    # [แก้บั๊ก] เดิมส่ง now_utc (เวลาที่กดปุ่ม sync) ไว้ใต้คีย์
-    # 'synced_from_odoo_at' ทำให้ค่า effective_date ที่ผู้ใช้กรอกในฟอร์ม
-    # ไม่ถูกส่งไป Backend เลย (นี่คือ "ตัวแปรวันที่ที่หายไป" ที่ผู้ควบคุม
-    # แจ้งมา) — Backend มีฟิลด์รองรับค่านี้อยู่แล้วแค่ใช้ชื่อคีย์
-    # 'synced_from_odoo_at' จึงแก้ให้ส่ง self.effective_date (วันที่ config
-    # นี้มีผลบังคับใช้จริง) ไปใต้คีย์นี้แทน
-    # ============================================================
     def _build_config_payload(self):
+        """แปลงเกณฑ์คะแนนทั้งหมดในฟอร์มนี้ เป็น dict ตาม schema ที่ Backend
+        ต้องการ สำหรับส่งไปตอนกด Push Config (POST /api/v1/config/scoring)"""
         return {
             'config_name':         self.name,
             'score_base':          self.score_base,
@@ -273,9 +290,16 @@ class TelematicsScoringConfig(models.Model):
             'harsh_corner_g':      self.harsh_corner_g,
             'speeding_kmh_over':   self.speeding_kmh_over,
             'idle_min_threshold':  self.idle_min_threshold,
-            # เพิ่ม 2026-07-08: กฎความเร็วแยกโซน กทม./นอกเมือง (บรีฟข้อ 2)
             'speed_limit_bkk':        self.speed_limit_bkk,
             'speed_limit_upcountry':  self.speed_limit_upcountry,
+            'tier_a_min_score':    self.tier_a_min_score,
+            'tier_a_bonus_pct':    self.tier_a_bonus_pct,
+            'tier_b_min_score':    self.tier_b_min_score,
+            'tier_b_bonus_pct':    self.tier_b_bonus_pct,
+            'tier_c_min_score':    self.tier_c_min_score,
+            'tier_c_bonus_pct':    self.tier_c_bonus_pct,
+            'tier_d_min_score':    self.tier_d_min_score,
+            'tier_d_bonus_pct':    self.tier_d_bonus_pct,
             'max_deduct_per_trip': self.max_deduct_per_trip,
             'is_active':           self.active,
             'synced_from_odoo_at': (
@@ -283,13 +307,10 @@ class TelematicsScoringConfig(models.Model):
             ),
         }
 
-    # ============================================================
-    # [J] ปุ่ม "💾 Push Config"
-    # POST http://192.168.1.43:8001/api/v1/config/scoring
-    # ============================================================
     def action_push_to_backend(self):
+        """ส่งเกณฑ์คะแนนทั้งหมดไปให้ Backend ใช้งานจริง (POST /api/v1/
+        config/scoring) — ต้องผ่านการอนุมัติก่อนเท่านั้นถึงจะกดได้"""
         self.ensure_one()
-        # เพิ่ม 2026-07-08: บังคับอนุมัติก่อน Push จริง (บรีฟ "กำหนดผู้อนุมัติ")
         if not self.approved_by_id:
             raise UserError(
                 'Config นี้ยังไม่ได้รับการอนุมัติ — กด "✅ Approve" ก่อน Push ไป Backend\n'
@@ -335,15 +356,11 @@ class TelematicsScoringConfig(models.Model):
             self.write({'last_push_status': f'ERROR: {e}'})
             raise UserError(f'ส่งค่าไป Backend ไม่สำเร็จ:\n{e}')
 
-    # ============================================================
-    # [K] ปุ่ม "⚡ Test Connection"
-    # ลอง POST /api/v1/config/scoring ด้วย dry_run=true
-    # endpoint เดียวกับ Push Config — ไม่ต้องหา health path แยก
-    # ============================================================
     def action_test_connection(self):
+        """ทดสอบว่าเชื่อมต่อ Backend ได้ไหม (GET / — ไม่มี /health แยก จึง
+        ใช้หน้าแรกซึ่งตอบสถานะ running กลับมาแทน)"""
         self.ensure_one()
         base_url = self._get_base_url()
-        # Backend ไม่มี /health — ใช้ GET / แทน (ตอบ {"status":"running",...})
         url = f'{base_url}/'
 
         _logger.info('action_test_connection: GET %s', url)
@@ -389,12 +406,9 @@ class TelematicsScoringConfig(models.Model):
             },
         }
 
-    # ============================================================
-    # [L] action_fetch_current_config — GET /api/v1/config/scoring/current
-    # ดึง config ที่ Backend ใช้งานอยู่ปัจจุบัน มาแสดงใน Odoo
-    # เรียกจากปุ่ม "🔄 ดึง Config ปัจจุบัน" บนหน้า Scoring Config
-    # ============================================================
     def action_fetch_current_config(self):
+        """ดึงเกณฑ์คะแนนที่ Backend ใช้งานอยู่จริงตอนนี้ (GET /api/v1/config/
+        scoring/current) มาแสดงเทียบกับที่ตั้งไว้ใน Odoo ผ่าน popup"""
         self.ensure_one()
         base_url = self._get_base_url()
         url      = f'{base_url}/api/v1/config/scoring/current'
@@ -417,7 +431,6 @@ class TelematicsScoringConfig(models.Model):
         except requests.RequestException as e:
             raise UserError(f'ดึง Config จาก Backend ไม่สำเร็จ:\n{e}')
 
-        # แสดงข้อมูลที่ได้รับกลับมาใน popup
         config_name  = data.get('config_name',  'N/A')
         score_base   = data.get('score_base',   'N/A')
         is_active    = '✅ Active' if data.get('is_active') else '❌ Inactive'
@@ -453,6 +466,19 @@ class TelematicsScoringConfig(models.Model):
                 'title':   f'🔄 Config บน Backend: {config_name}',
                 'message': msg,
                 'type':    'info',
-                'sticky':  True,   # ค้างไว้ให้อ่านได้ ต้องกด X ปิดเอง
+                'sticky':  True,
             },
         }
+
+    @api.model
+    def _track_usage(self, count=1):
+        """อัปเดต History fields (last_used_date, total_trips_calculated)
+        ของ config ที่ Active อยู่ตอนนี้ — เรียกจาก models/telematics_log.py
+        ทุกครั้งที่มี Trip ใหม่ sync เข้ามา (Backend คำนวณคะแนนด้วย config
+        ที่ Active อยู่ ณ ขณะนั้นเสมอ ตาม FDD §12.5)"""
+        active_cfg = self.search([('active', '=', True)], limit=1)
+        if active_cfg:
+            active_cfg.write({
+                'last_used_date':          fields.Datetime.now(),
+                'total_trips_calculated':  active_cfg.total_trips_calculated + count,
+            })

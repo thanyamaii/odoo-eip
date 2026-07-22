@@ -1,6 +1,9 @@
 # ==============================================================================
-# models/fleet_vehicle_ext.py  [MODIFIED — final]
-# ฟิลด์และ Logic ทั้งหมดของ Telematics Extension บน fleet.vehicle
+# models/fleet_vehicle_ext.py
+#
+# ต่อยอด fleet.vehicle (รถ) เพิ่มฟิลด์และปุ่มทั้งหมดที่เกี่ยวกับ Telematics:
+# ผูก/ลงทะเบียน GPS Device, เช็คสถานะ/พิกัดสด, ตรวจสอบ Device ตรงกันไหม,
+# ส่งข้อมูลรถ+บอร์ดไป Backend, สถิติสะสม (ทริป/ระยะทาง/คะแนน/ชั่วโมงเครื่องยนต์)
 # ==============================================================================
 import logging
 import requests
@@ -13,20 +16,14 @@ _logger = logging.getLogger(__name__)
 
 
 class FleetVehicleExt(models.Model):
+    """ต่อยอด fleet.vehicle เพิ่ม field/ปุ่มสำหรับระบบ Fleet Telematics"""
     _inherit = 'fleet.vehicle'
-
-    # ============================================================
-    # [A] ฟิลด์ Telematics
-    # ============================================================
 
     telematics_device_id = fields.Char(
         string='GPS Device ID',
         help='รหัสกล่อง GPS เช่น KTC-001 — ต้องตรงกับ device_id ใน Backend'
     )
 
-    # เพิ่ม 2026-06-30: รวมระบบลงทะเบียน Device เข้ามาในหน้ารถโดยตรง
-    # (เดิมแยกเป็นเมนู "Devices" ต่างหาก ทำให้มี 2 ทางผูก Device กับรถพร้อมกัน
-    #  เสี่ยงข้อมูลขัดแย้งกัน — ยุบรวมเหลือทางเดียวที่นี่)
     telematics_device_name = fields.Char(
         string='Device Name',
         help='ชื่อเรียก Device สำหรับแสดงผล (ส่งไป Backend ตอนลงทะเบียนครั้งแรก)'
@@ -43,9 +40,9 @@ class FleetVehicleExt(models.Model):
     )
     telematics_register_error = fields.Text(string='Register Error', readonly=True)
 
-    # เพิ่ม 2026-06-30: แสดงเลข ID ของคนขับแบบตัวเลขชัดๆ เทียบกับที่ Backend
-    # ใช้เป็น driver_id ในรายงานต่างๆ (เช่น JSON ของ /drivers/{id}/bonus
-    # ที่คืน "driver_id": "12" — เลขนี้คือ id ของ hr.employee ใน Odoo ตรงๆ)
+    # เลข ID ของคนขับแบบตัวเลขชัดๆ เทียบกับที่ Backend ใช้เป็น driver_id ใน
+    # รายงานต่างๆ (เช่น JSON ของ /drivers/{id}/bonus คืน "driver_id": "12"
+    # — เลขนี้คือ id ของ hr.employee ใน Odoo ตรงๆ)
     driver_backend_id = fields.Integer(
         string='Driver ID (สำหรับเทียบกับ Backend)',
         compute='_compute_driver_backend_id',
@@ -58,21 +55,14 @@ class FleetVehicleExt(models.Model):
         for rec in self:
             rec.driver_backend_id = rec.driver_id.id if rec.driver_id else 0
 
-    # จดจำบอร์ดเดิมอัตโนมัติผ่าน write() hook
-    # ใช้เป็น old_device_id เมื่อยิง PUT /api/v1/config/vehicle
+    # จดจำบอร์ดเดิมอัตโนมัติผ่าน write() hook ด้านล่าง ใช้เป็น old_device_id
+    # ตอนยิง PUT /api/v1/config/vehicle เวลาย้ายบอร์ดไปผูกรถคันอื่น
     previous_device_id = fields.Char(
         string='Previous Device ID',
         readonly=True,
         help='รหัสบอร์ดก่อนการเปลี่ยนครั้งล่าสุด — ระบบบันทึกอัตโนมัติ'
     )
 
-    # ============================================================
-    # [A2] เพิ่มใหม่ — Verify Device (GET /api/v1/vehicles/{id}/device)
-    #   เดิม endpoint นี้มีอยู่ใน Swagger ของ Backend แต่ไม่เคยถูกเรียกใช้
-    #   เลยสักที่ในโมดูล ทำให้ Odoo ไม่เคยตรวจสอบว่า device ที่ผูกไว้ใน
-    #   Odoo (telematics_device_id) ตรงกับที่ Backend บันทึกจริงหรือไม่
-    #   → เพิ่มปุ่ม "ตรวจสอบ Device" ให้เทียบสดเป็นรายคัน
-    # ============================================================
     device_verified_at = fields.Datetime(
         string='Device Verified At',
         readonly=True,
@@ -107,17 +97,12 @@ class FleetVehicleExt(models.Model):
     ], string='Sync Status', default='idle', readonly=True,
        help='แสดงสถานะการส่งข้อมูลไป Backend')
 
-    # ============================================================
-    # [B] สถิติสะสม
-    # ============================================================
-
+    # ── สถิติสะสม ────────────────────────────────────────────────────────
     total_trips        = fields.Integer(string='Total Trips',        default=0)
     total_distance_km  = fields.Float(string='Total Distance (km)',  digits=(10, 2), default=0.0)
     avg_driver_score   = fields.Float(string='Avg Driver Score',     digits=(5,  2), default=0.0)
-    # เพิ่ม 2026-07-12 (พบ gap ตอนตรวจสอบตาม FDD §2.2): FDD ระบุ trigger
-    # ซ่อมบำรุง 3 รูปแบบ (ระยะทาง / ชั่วโมงเดินเครื่อง / ช่วงเวลา) แต่โค้ดเดิม
-    # ทำแค่ 2 แบบ (ระยะทาง+ช่วงเวลา) — ไม่เคยสะสมชั่วโมงเดินเครื่องเลย ทั้งที่
-    # มี duration_min ต่อทริปอยู่แล้วในโมเดล fleet.telematics.log
+    # ชั่วโมงเดินเครื่องสะสม — เป็น Trigger ที่ 2 ของการแจ้งเตือนซ่อมบำรุง
+    # (อีก 2 แบบคือระยะทางสะสมและช่วงเวลา รวมเป็น 3 รูปแบบตาม FDD §2.2)
     telematics_engine_hours = fields.Float(
         string='Engine Hours (สะสม)', digits=(10, 2), default=0.0,
         help='ชั่วโมงเดินเครื่องสะสม รวมจาก duration_min ของทุกทริปที่ sync แล้ว '
@@ -126,11 +111,8 @@ class FleetVehicleExt(models.Model):
         'fleet.telematics.log', 'vehicle_id', string='Trip Logs'
     )
 
-    # ============================================================
-    # [C] Helper — ดึง API URL + Key จาก confirmed URL
-    # ============================================================
-
     def _get_api_credentials(self):
+        """ดึง API URL/Key ที่ใช้งานอยู่ตอนนี้ — error ทันทีถ้ายังไม่ตั้งค่า"""
         Config = self.env['fleet.telematics.config']
         api_url = Config.get_active_api_url()
         api_key = Config.get_active_api_key()
@@ -141,17 +123,11 @@ class FleetVehicleExt(models.Model):
             )
         return api_url, api_key
 
-    # ============================================================
-    # [C2] ลงทะเบียน Device ครั้งแรกกับ Backend — รวมเข้ามาจากเมนู
-    # "Devices" เดิม (POST /config_device/register) ให้กรอก/กดได้
-    # จากหน้ารถโดยตรง ไม่ต้องสลับไปอีกเมนู
-    #
-    # ใช้คู่กับ action_sync_to_backend() (PUT /config/vehicle) ที่มีอยู่เดิม:
-    #   - ครั้งแรกที่ Device ยังไม่เคยลงทะเบียนเลย → ใช้ปุ่มนี้ (Register)
-    #   - หลังจากนั้นถ้าจะ "ย้าย" Device ไปผูกรถคันอื่น/เปลี่ยนบอร์ด
-    #     → ใช้ action_sync_to_backend() (Push to Backend) ตามเดิม
-    # ============================================================
     def action_register_device(self):
+        """ลงทะเบียนผูก GPS Device เข้ากับรถคันนี้เป็นครั้งแรก (POST
+        /config_device/register) — ใช้ครั้งแรกที่ Device ยังไม่เคยลงทะเบียน
+        เลย ถ้าจะ "ย้าย" Device ไปผูกรถคันอื่นในภายหลัง ให้ใช้
+        action_sync_to_backend() (ปุ่ม Push to Backend) แทน"""
         self.ensure_one()
         if not self.telematics_device_id:
             raise UserError('กรุณากรอก GPS Device ID ก่อน (รูปแบบ KTC-XXX)')
@@ -212,12 +188,9 @@ class FleetVehicleExt(models.Model):
         })
         raise UserError(f'Backend ตอบกลับผิดพลาด (HTTP {resp.status_code}): {resp.text[:300]}')
 
-    # ============================================================
-    # [D] ดักรถ/บอร์ดซ้ำ — Validation ฝั่ง Python
-    # ============================================================
-
     @api.constrains('license_plate', 'telematics_device_id')
     def _check_duplicate_vehicle(self):
+        """ห้ามทะเบียนรถหรือ Device ID ซ้ำกับรถคันอื่นในระบบ"""
         for rec in self:
             if rec.license_plate:
                 dup = self.search([
@@ -240,26 +213,19 @@ class FleetVehicleExt(models.Model):
                         f'Device ID "{rec.telematics_device_id}" ถูกใช้โดยรถ: {dup_dev.name}'
                     )
 
-    # ============================================================
-    # [E] Override write() — ดักจับบอร์ดเดิมก่อนเปลี่ยนค่า
-    #
-    # แนวทาง: ใส่ previous_device_id เข้าไปใน vals dict เดียวกัน
-    # แล้วเรียก super().write(vals) ครั้งเดียว → ไม่มี write ซ้อน
-    # ไม่ trigger constrains สองรอบ ไม่มี race condition
-    # ============================================================
-
     def write(self, vals):
+        """ก่อนเปลี่ยน telematics_device_id ให้จำค่าเดิมไว้ที่
+        previous_device_id ในการเขียนครั้งเดียวกัน (ไม่ write ซ้อน ไม่ trigger
+        constrains สองรอบ ไม่มี race condition) เพื่อใช้เป็น old_device_id
+        ตอนยิง PUT ไป Backend ภายหลัง"""
         if 'telematics_device_id' in vals:
             new_val = vals.get('telematics_device_id') or ''
             for rec in self:
                 old_val = rec.telematics_device_id or ''
-                # บันทึก previous เฉพาะเมื่อมีค่าเดิมอยู่ และค่าเปลี่ยนจริง
                 if old_val and old_val != new_val:
-                    # ใส่ลงใน vals ของ rec นั้นๆ เพื่อ write รอบเดียว
                     super(FleetVehicleExt, rec).write(
                         dict(vals, previous_device_id=old_val)
                     )
-            # รถที่ไม่มีค่าเดิม (บอร์ดใหม่) หรือค่าไม่เปลี่ยน → write ปกติ
             remaining = self.filtered(
                 lambda r: not (r.telematics_device_id and
                                r.telematics_device_id != new_val)
@@ -269,23 +235,11 @@ class FleetVehicleExt(models.Model):
             return True
         return super().write(vals)
 
-    # ============================================================
-    # [F] action_sync_to_backend — PUT /api/v1/config/vehicle
-    #
-    # Payload สเปก Backend (ยืนยันจาก Swagger 2026-06-30):
-    #   { "vehicle_id": int, "new_device_id": str, "old_device_id": str|None,
-    #     "driver_id": int }
-    #
-    # เพิ่ม driver_id เข้า payload — เดิมไม่เคยส่งฟิลด์นี้เลยทั้งที่ Backend
-    # รองรับอยู่แล้ว ทำให้ Backend ไม่รู้ว่ารถคันนี้มีคนขับคนไหนผูกอยู่
-    # ใช้ self.driver_id (field มาตรฐานของ fleet.vehicle) — ถ้าไม่มีคนขับ
-    # ผูกอยู่ ส่งเป็น 0 ตามตัวอย่าง schema ของ Backend (ไม่ใช่ null)
-    #
-    # หลัง PUT 200: อัปเดต previous_device_id = telematics_device_id ทันที
-    # เพื่อให้พร้อมสำหรับการเปลี่ยนบอร์ดครั้งถัดไป
-    # ============================================================
-
     def action_sync_to_backend(self):
+        """ส่งข้อมูลรถ+บอร์ด+คนขับปัจจุบันไปอัปเดตที่ Backend (PUT /api/v1/
+        config/vehicle) — ใช้ตอนย้ายบอร์ดไปผูกรถอื่น หรือเปลี่ยนคนขับ
+        หลังส่งสำเร็จจะอัปเดต previous_device_id ให้พร้อมสำหรับการเปลี่ยน
+        บอร์ดครั้งถัดไปทันที"""
         self.ensure_one()
 
         if not self.telematics_device_id:
@@ -294,12 +248,12 @@ class FleetVehicleExt(models.Model):
         api_url, api_key = self._get_api_credentials()
 
         new_device = self.telematics_device_id or ''
-        old_device = self.previous_device_id or None  # None ถ้าเป็นบอร์ดใหม่
+        old_device = self.previous_device_id or None
 
         payload = {
             'vehicle_id':    int(self.id),
             'new_device_id': new_device,
-            'old_device_id': old_device,   # None หรือ str
+            'old_device_id': old_device,
             'driver_id':     self.driver_id.id if self.driver_id else 0,
         }
 
@@ -308,7 +262,6 @@ class FleetVehicleExt(models.Model):
             self.id, new_device, old_device, payload
         )
 
-        # เปลี่ยนสถานะเป็น "กำลังรอ"
         super(FleetVehicleExt, self).write({'sync_status': 'syncing'})
 
         try:
@@ -320,9 +273,8 @@ class FleetVehicleExt(models.Model):
             )
             resp.raise_for_status()
 
-            # PUT 200 → เคลียร์ previous_device_id = new_device (พร้อมรอบถัดไป)
-            # และอัปเดต sync_status → synced
-            # ใช้ super() โดยตรงเพื่อข้าม write() hook (ไม่ต้องการบันทึก previous ซ้ำ)
+            # ใช้ super() ตรงๆ เพื่อข้าม write() hook ด้านบน (ไม่ต้องการ
+            # บันทึก previous_device_id ซ้ำอีกรอบตรงนี้)
             super(FleetVehicleExt, self).write({
                 'sync_status':       'synced',
                 'previous_device_id': new_device,
@@ -353,12 +305,11 @@ class FleetVehicleExt(models.Model):
             super(FleetVehicleExt, self).write({'sync_status': 'idle'})
             raise UserError(f'ส่งข้อมูลไป Backend ไม่สำเร็จ:\n{e}')
 
-    # ============================================================
-    # [G] action_check_vehicle_status — GET /api/v1/vehicles/{vehicle_id}/location
-    # ใช้ self.id (Odoo ID ตัวเลข) ใน path ตามสเปก Backend
-    # ============================================================
-
     def action_check_vehicle_status(self):
+        """ดึงพิกัด/ความเร็ว/สถานะ ignition สดของรถคันนี้ (GET /vehicles/
+        {id}/location) มาอัปเดตหน้าจอทันที — ถือว่า Online ถ้า ignition
+        เปิดอยู่หรือความเร็ว > 0 นอกจากนี้ยังอัปเดต telematics_device_id
+        ตามที่ Backend ตอบกลับมาด้วย เผื่อกรณี Backend สลับบอร์ดไปแล้ว"""
         self.ensure_one()
 
         api_url, api_key = self._get_api_credentials()
@@ -378,14 +329,12 @@ class FleetVehicleExt(models.Model):
             super(FleetVehicleExt, self).write({'sync_status': 'idle'})
             raise UserError(f'เรียก Backend API ไม่สำเร็จ:\n{e}')
 
-        # แปลง Response → Odoo fields
         lat      = data.get('lat',      self.last_lat)
         lon      = data.get('lon',      self.last_lon)
         speed    = float(data.get('speed',    0) or 0)
         ignition = bool(data.get('ignition', False))
         ts_raw   = data.get('ts')
 
-        # device_id ที่ Backend ตอบกลับ — ใช้อัปเดตหน้าจอให้ตรงหลังบ้านเสมอ
         backend_device_id = data.get('device_id') or self.telematics_device_id or '-'
 
         if ts_raw:
@@ -408,8 +357,6 @@ class FleetVehicleExt(models.Model):
             'online_status': 'online' if is_online else 'offline',
             'sync_status':   'synced',
         }
-        # อัปเดต telematics_device_id จาก Backend response
-        # เผื่อกรณี Backend สลับบอร์ด → หน้าจอ Odoo อัปเดตตามอัตโนมัติ
         if backend_device_id and backend_device_id != '-':
             write_vals['telematics_device_id'] = backend_device_id
 
@@ -445,15 +392,25 @@ class FleetVehicleExt(models.Model):
             },
         }
 
-    # ============================================================
-    # [G2] action_verify_device — GET /api/v1/vehicles/{vehicle_id}/device
-    #   (เพิ่มใหม่ — endpoint นี้มีใน Swagger Backend อยู่แล้วแต่ Odoo
-    #    ไม่เคยเรียกใช้เลย — ใช้ตรวจว่า device_id ที่ Backend ผูกกับรถคันนี้
-    #    จริง ตรงกับ telematics_device_id ที่บันทึกไว้ใน Odoo หรือไม่
-    #    ต่างจาก action_check_vehicle_status (ดึงพิกัด/ความเร็ว real-time)
-    #    ตัวนี้เช็คเฉพาะ "ความถูกต้องของการผูก device" เท่านั้น)
-    # ============================================================
     def action_verify_device(self):
+        """ตรวจว่า Device ID ที่ Backend ผูกกับรถคันนี้จริง ตรงกับ
+        telematics_device_id ที่บันทึกไว้ใน Odoo หรือไม่ (GET /vehicles/
+        {id}/device) — ต่างจาก action_check_vehicle_status ตรงที่ตัวนี้
+        เช็คเฉพาะ "ความถูกต้องของการผูก device" ไม่ใช่พิกัด/ความเร็วสด
+
+        กรณีเชื่อมต่อ Backend ไม่ได้ หรือ Backend ตอบ 404 (ไม่รู้จักรถคันนี้
+        เลย) ถือเป็น mismatch เสมอไม่มีเงื่อนไข เพราะทั้งสองกรณีคือสัญญาณ
+        ว่าข้อมูลไม่ตรงกันแน่นอน ไม่ว่า Odoo จะมีค่า telematics_device_id
+        อยู่หรือไม่ก็ตาม
+
+        หมายเหตุการทดสอบ: ถ้าเทสของฟังก์ชันนี้ครอบด้วย self.assertRaises()
+        ของ Odoo (ไม่ใช่ try/except ของ Python เฉยๆ) ค่าที่ write() ไว้ตรงนี้
+        จะถูก rollback ทิ้งไปเสมอทันทีที่จับ UserError ได้ — เพราะ
+        self.assertRaises() ของ Odoo (TransactionCase) ตั้ง savepoint ก่อน
+        เข้า block แล้ว rollback กลับไปที่นั่นทันทีที่จับ exception ที่คาดไว้
+        ได้ (กันโค้ดทดสอบ error ทิ้งข้อมูลเพี้ยนไว้) เทสของฟังก์ชันนี้จึงต้อง
+        ใช้ try/except ธรรมดาแทน ดู tests/test_fleet_integration.py:
+        TestUC12VerifyDevice.test_03/test_04"""
         self.ensure_one()
 
         api_url, api_key = self._get_api_credentials()
@@ -473,8 +430,7 @@ class FleetVehicleExt(models.Model):
             raise UserError(f'ตรวจสอบ Device ไม่สำเร็จ — เรียก Backend ไม่ได้:\n{e}')
 
         if resp.status_code == 404:
-            # Backend ไม่รู้จักรถคันนี้เลย (ยังไม่เคย register หรือถูกลบไปแล้ว)
-            mismatch = bool(self.telematics_device_id)
+            mismatch = True
             note = (
                 'Backend ไม่มีข้อมูล Device ผูกกับรถคันนี้ '
                 f'(Odoo บันทึกไว้ว่า: {self.telematics_device_id or "-"})'
@@ -522,23 +478,15 @@ class FleetVehicleExt(models.Model):
             },
         }
 
-    # ============================================================
-    # ============================================================
-    # [H] get_trip_history — GET /api/v1/vehicles/{vehicle_id}/trips
-    #
-    # ยืนยันจาก Swagger (2026-07-02):
-    #   - Path param: vehicle_id (integer) = Odoo record ID ของรถ
-    #     ไม่ใช่ device_id (KTC-XXX) — แก้จากเดิมที่ใช้ telematics_device_id
-    #   - Query params: page, limit (max 200), date_from, date_to (ISO8601), synced_only (bool)
-    #   - Response: {total, page, limit, total_pages, trips: [...]}
-    # ============================================================
     def get_trip_history(self, page=1, limit=20,
                          date_from=None, date_to=None, synced_only=None):
+        """ดึงประวัติทริปของรถคันนี้จาก Backend (GET /vehicles/{vehicle_id}/
+        trips) — vehicle_id ในที่นี้คือ Odoo record ID (int) ไม่ใช่ device_id
+        รองรับแบ่งหน้า + กรองตามช่วงวันที่ + เฉพาะที่ sync แล้ว"""
         self.ensure_one()
 
         api_url, api_key = self._get_api_credentials()
 
-        # Path param คือ Odoo vehicle.id (int) ยืนยันจาก Swagger
         url = f'{api_url}/api/v1/vehicles/{self.id}/trips'
 
         params = {'page': page, 'limit': min(limit, 200)}
@@ -562,12 +510,12 @@ class FleetVehicleExt(models.Model):
         data = resp.json()
         if isinstance(data, list):
             return {'trips': data, 'total': len(data)}
-        return data  # คืน dict เต็ม {total, page, limit, total_pages, trips}
+        return data
 
     def action_view_vehicle_trips(self):
-        """ปุ่มดู Trip History จาก Backend ในแท็บ Telematics Settings
-        เรียก GET /vehicles/{id}/trips — vehicle_id คือ Odoo ID (int)
-        รองรับ query params ตาม Swagger: page, limit, date_from, date_to, synced_only"""
+        """ปุ่มดู Trip History จาก Backend ในแท็บ Telematics Settings —
+        ดึงมาแค่สรุปตัวเลขแสดงเป็น notification บอกให้ไปดูรายละเอียดเต็มที่
+        เมนู Trip Logs แทน"""
         self.ensure_one()
         try:
             result = self.get_trip_history(limit=20, synced_only=False)
@@ -591,15 +539,12 @@ class FleetVehicleExt(models.Model):
             raise UserError(f'ดึงประวัติ trip ไม่สำเร็จ: {e}')
 
 
-# ==============================================================================
-# เพิ่ม 2026-07-12 — extend fleet.vehicle.log.services (core Odoo model)
-#
-# เพิ่ม field engine_hours_at_service เพื่อบันทึก snapshot ของชั่วโมงเดินเครื่อง
-# สะสม ณ ตอนที่ทำ service แต่ละครั้ง — ใช้เป็นจุดอ้างอิงเทียบ Trigger 2
-# (ชั่วโมงเดินเครื่อง) ของการแจ้งเตือนซ่อมบำรุงครั้งถัดไป (ดู
-# models/telematics_log.py: _update_odometer_and_check_maintenance)
-# ==============================================================================
 class FleetVehicleLogServicesExt(models.Model):
+    """ต่อยอด fleet.vehicle.log.services (ประวัติการซ่อมบำรุงมาตรฐานของ
+    Odoo Fleet) เพิ่ม snapshot ชั่วโมงเดินเครื่องสะสม ณ ตอนที่ทำ service
+    แต่ละครั้ง — ใช้เป็นจุดอ้างอิงคำนวณ Trigger ชั่วโมงเดินเครื่องของรอบ
+    ซ่อมบำรุงถัดไป (ดู models/telematics_log.py:
+    _update_odometer_and_check_maintenance)"""
     _inherit = 'fleet.vehicle.log.services'
 
     engine_hours_at_service = fields.Float(

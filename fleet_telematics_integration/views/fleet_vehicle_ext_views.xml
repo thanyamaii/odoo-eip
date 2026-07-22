@@ -1,11 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  views/fleet_vehicle_ext_views.xml  [MODIFIED]
-  ปุ่มและแท็บ Telematics ในหน้ารถ fleet.vehicle
-  เพิ่ม:
-    - ☀️  เช็คสถานะรถ (Real-time พร้อม status badge: กำลังทำงาน/กำลังรอ/อัปเดตสำเร็จ)
-    - ⬆️  Sync to Backend (ส่งรถ+บอร์ดไป Backend ทันที)
-    - ป๊อปอัพแจ้งเตือนเมื่อรถ/บอร์ดซ้ำ (ดักฝั่ง Frontend ก่อนยิง)
+  views/fleet_vehicle_ext_views.xml
+  ปุ่มและแท็บ Telematics ทั้งหมดในหน้ารถ fleet.vehicle — ดู
+  models/fleet_vehicle_ext.py
 -->
 <odoo>
 
@@ -129,11 +126,9 @@
                             <field name="sync_status" readonly="1"/>
                         </group>
                         <group string="สรุปสถิติ">
-                            <!-- แก้ 2026-07-12: field กลุ่มนี้เป็น field ธรรมดา (ไม่ใช่
-                                 compute) จึงยังพิมพ์แก้เองได้ตรงๆ ทั้งที่ควรดึงจาก
-                                 Backend อัตโนมัติเท่านั้น ("ค่าสถิติและระยะทางควรดึงมา
-                                 อัตโนมัติและแก้ไขไม่ได้") ล็อก readonly="1" ให้ครบ
-                                 + จัดชิดขวาตามมาตรฐาน UI ของ Odoo สำหรับข้อมูลตัวเลข -->
+                            <!-- ล็อกแก้ไขไม่ได้ทั้งหมด — ค่าเหล่านี้อัปเดตอัตโนมัติ
+                                 จาก _update_odometer_and_check_maintenance() เท่านั้น
+                                 (models/telematics_log.py) -->
                             <field name="total_trips" readonly="1" class="text-end"/>
                             <field name="total_distance_km" readonly="1" class="text-end"/>
                             <field name="avg_driver_score" readonly="1" class="text-end"/>
@@ -142,10 +137,9 @@
                         </group>
                     </group>
 
-                    <!-- ประวัติ Trip -->
-                    <!-- แก้ 2026-07-12: เดิมกดปุ่ม "เพิ่มรายการ" สร้างทริปเองในตารางนี้
-                         ได้ตรงๆ ทั้งที่ควรถูกดึงมาจาก Backend อัตโนมัติทุกวันเท่านั้น
-                         ปิด create/edit/delete ระดับ list ป้องกันการคีย์ข้อมูลมือ -->
+                    <!-- ประวัติ Trip — ปิด create/edit/delete ระดับ list เพราะข้อมูล
+                         ต้องมาจากการ sync อัตโนมัติจาก Backend เท่านั้น
+                         ห้ามกรอกมือ -->
                     <field name="telematics_log_ids">
                         <list default_order="trip_start desc"
                               create="0" edit="0" delete="0">

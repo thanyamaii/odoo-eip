@@ -1,10 +1,9 @@
 # ==============================================================================
 # models/telematics_payload.py
-# กล่องจดหมายรับ API (Payload Inbox) — แนวคิดจากโปรเจกต์ตัวอย่าง fleet_telematics
 #
-# หลักการ: ทุก request ที่ Backend ยิงเข้ามา ต้องถูกเก็บ "ดิบๆ" ไว้ก่อนเสมอ
-# แม้ข้อมูลจะผิด format / ขาด field / APIKEY ผิด ก็ยังมีหลักฐานไว้ตรวจสอบ
-# กับทีม Backend ได้ ไม่หายไปเฉยๆ
+# กล่องจดหมายรับ API (Payload Inbox) — เก็บทุก request ดิบๆ ที่ Backend ยิง
+# เข้ามา ไม่ว่าข้อมูลจะถูกหรือผิด format ก็ตาม เพื่อใช้เป็นหลักฐานตรวจสอบ
+# ย้อนหลังกับทีม Backend ได้เสมอ ไม่ให้ข้อมูลที่ผิดพลาดหายไปเงียบๆ
 # ==============================================================================
 import json
 import logging
@@ -15,6 +14,7 @@ _logger = logging.getLogger(__name__)
 
 
 class TelematicsPayload(models.Model):
+    """บันทึก request ดิบทุกครั้งที่มีคนยิงเข้ามาที่ webhook ของระบบ"""
     _name = 'fleet.telematics.payload'
     _description = 'Telematics Incoming Payload (API Inbox)'
     _order = 'received_at desc'
@@ -72,12 +72,16 @@ class TelematicsPayload(models.Model):
 
     @api.depends('received_at', 'endpoint')
     def _compute_display_ref(self):
+        """สร้างชื่ออ้างอิงอ่านง่าย เช่น PAYLOAD/20260717-093000/42"""
         for rec in self:
             ts = rec.received_at or fields.Datetime.now()
             rec.display_ref = f'PAYLOAD/{ts:%Y%m%d-%H%M%S}/{rec.id or "new"}'
 
     @api.depends('raw_payload')
     def _compute_payload_pretty(self):
+        """ลองแปลง raw_payload เป็น JSON สวยงามให้อ่านง่ายในหน้าจอ ถ้าแปลง
+        ไม่ได้ (ไม่ใช่ JSON ที่ถูกต้อง) ให้แสดงข้อความดิบไว้เฉยๆ พร้อม flag
+        payload_valid_json = False ไว้เตือน"""
         for rec in self:
             if rec.raw_payload:
                 try:

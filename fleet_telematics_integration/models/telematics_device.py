@@ -1,8 +1,8 @@
 # ==============================================================================
 # models/telematics_device.py
-# เก็บ Device list ที่ดึงมาจาก GET /api/v1/devices
-# + ลงทะเบียน Device ใหม่ผ่าน POST /api/v1/config_device/register (+batch)
-#   (UC-01 — เพิ่มใหม่: เดิมมีแต่โมเดล ไม่มีฟังก์ชันเรียก Backend เลย)
+#
+# รายการ GPS Device ทั้งหมดในระบบ — ลงทะเบียนผูก Device เข้ากับรถทีละตัว
+# หรือหลายตัวพร้อมกัน (batch) ผ่าน Backend API
 # ==============================================================================
 
 import logging
@@ -19,15 +19,16 @@ _DEVICE_ID_RE = re.compile(r'^KTC-\d{3,}$')
 
 
 class TelematicsDevice(models.Model):
+    """1 record = GPS Device 1 ตัว ผูกกับรถ 1 คันเสมอ (Backend บังคับ)"""
     _name = 'fleet.telematics.device'
     _description = 'Telematics Device'
     _rec_name = 'device_id'
     _order = 'device_id'
 
-    _sql_constraints = [
-        ('device_id_unique', 'UNIQUE(device_id)',
-         'รหัส Device นี้ถูกลงทะเบียนไว้แล้ว'),
-    ]
+    _device_id_unique = models.Constraint(
+        'UNIQUE(device_id)',
+        'รหัส Device นี้ถูกลงทะเบียนไว้แล้ว',
+    )
 
     config_id = fields.Many2one(
         'fleet.telematics.config',
@@ -51,13 +52,14 @@ class TelematicsDevice(models.Model):
     vehicle_id = fields.Many2one(
         'fleet.vehicle',
         string='Vehicle',
-        required=True,   # Backend ยืนยันแล้ว (2026-06-30): RegisterDeviceRequest.vehicle_id
-                          # เป็น int ธรรมดา ไม่มี Optional/default — ส่ง null ไม่ได้ จะโดน 422
-                          # ก่อนหน้านี้ comment เก่าเข้าใจผิดว่า field นี้ optional
-        ondelete='restrict',  # required=True ทำให้ใช้ set null ไม่ได้ (จะ violate NOT NULL
-                              # ตอนลบรถที่ผูกอยู่) — ใช้ restrict กันลบรถที่มี device ผูกอยู่แทน
-        help='รถที่ผูกกับ Device นี้ใน Odoo — Backend บังคับต้องระบุเสมอ '
-             '(ลงทะเบียน device ก่อนแล้วผูกรถทีหลังยังทำไม่ได้ในปัจจุบัน)'
+        required=True,
+        # required=True เพราะ Backend บังคับว่า vehicle_id ต้องระบุเสมอตอน
+        # ลงทะเบียน (ส่ง null ไม่ได้ จะโดน 422) — ปัจจุบันยังลงทะเบียน device
+        # ก่อนแล้วค่อยผูกรถทีหลังไม่ได้
+        ondelete='restrict',
+        # ใช้ restrict แทน set null เพราะ field นี้ required — ป้องกันการลบ
+        # รถที่ยังมี device ผูกอยู่ (ลบไม่ได้จนกว่าจะเลิกผูกก่อน)
+        help='รถที่ผูกกับ Device นี้ใน Odoo — Backend บังคับต้องระบุเสมอ',
     )
 
     active = fields.Boolean(string='Active', default=True)
@@ -91,6 +93,7 @@ class TelematicsDevice(models.Model):
 
     @api.constrains('device_id')
     def _check_device_id_format(self):
+        """บังคับรูปแบบ Device ID ให้เป็น KTC-XXX (ตัวพิมพ์ใหญ่) เท่านั้น"""
         for rec in self:
             if rec.device_id and not _DEVICE_ID_RE.match(rec.device_id.upper()):
                 raise UserError(
@@ -98,11 +101,10 @@ class TelematicsDevice(models.Model):
                     'เช่น KTC-001 — ที่กรอกมา: %s' % rec.device_id
                 )
 
-    # ==========================================================================
-    # ปุ่ม "Register" — เรียก POST /api/v1/config_device/register ทีละตัว
-    # จัดการ error 409 ตามกฎที่ Backend แจ้งไว้ 3 เคส
-    # ==========================================================================
     def action_register_device(self):
+        """ลงทะเบียน Device ตัวนี้กับ Backend ทีละตัว (POST /config_device/
+        register) จัดการ error 409 (ชนกับ device/รถอื่นที่ผูกอยู่แล้ว) ให้
+        ข้อความอธิบายชัดเจนว่าต้องไปแก้ตรงไหน"""
         self.ensure_one()
         Config = self.env['fleet.telematics.config']
         api_url = Config.get_active_api_url()
@@ -138,8 +140,8 @@ class TelematicsDevice(models.Model):
             return True
 
         if resp.status_code == 409:
-            # 3 เคส conflict ที่ Backend enforce:
-            # device ผูกกับรถเดิมอยู่แล้ว / ผูกกับรถอื่นอยู่แล้ว / รถมี device อื่นผูกอยู่แล้ว
+            # ชนกัน 3 แบบที่ Backend ตรวจ: device นี้ผูกกับรถเดิมอยู่แล้ว /
+            # ผูกกับรถอื่นอยู่แล้ว / รถคันนี้มี device อื่นผูกอยู่แล้ว
             try:
                 msg = resp.json().get('message', 'Device/Vehicle ถูกผูกไว้แล้ว')
             except ValueError:
@@ -151,15 +153,13 @@ class TelematicsDevice(models.Model):
                 '"Update Vehicle Config" ที่หน้า fleet.vehicle แทน'
             )
 
-        # error อื่นๆ ที่ไม่ใช่ 201/409
         self.write({'register_status': 'error', 'last_error': resp.text[:500]})
         raise UserError(f'Backend ตอบกลับผิดพลาด (HTTP {resp.status_code}): {resp.text[:300]}')
 
-    # ==========================================================================
-    # Batch register — เรียก POST /api/v1/config_device/register/batch
-    # ==========================================================================
     @api.model
     def action_register_devices_batch(self, device_recs):
+        """ลงทะเบียน Device หลายตัวพร้อมกันในคำขอเดียว (POST /config_device/
+        register/batch) เร็วกว่าเรียกทีละตัวเมื่อมี Device จำนวนมาก"""
         Config = self.env['fleet.telematics.config']
         api_url = Config.get_active_api_url()
         api_key = Config.get_active_api_key()

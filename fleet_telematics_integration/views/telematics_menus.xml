@@ -29,7 +29,7 @@
               web_icon="fleet_telematics_integration,static/description/icon.png"/>
 
     <!-- ═══════════════════════════════════════════════════════════════ -->
-    <!--  2.0 Devices — ปิดเมนูนี้แล้ว (2026-06-30)                       -->
+    <!--  2.0 Devices — ปิดเมนูนี้แล้ว                                    -->
     <!--  เดิมแยกเป็นเมนูต่างหาก ทำให้มี 2 ทางผูก Device กับรถพร้อมกัน    -->
     <!--  (อีกทางคือแท็บ "Telematics Settings" ในฟอร์มรถ fleet.vehicle)  -->
     <!--  เสี่ยงข้อมูลขัดแย้งกัน — รวมเหลือทางเดียวในหน้ารถแทนแล้ว        -->
@@ -183,7 +183,7 @@
               action="action_telematics_backend_report"
               sequence="50"/>
 
-    <!-- Payload Inbox — ปิดเมนูแล้ว (2026-07-01)
+    <!-- Payload Inbox — ปิดเมนูแล้ว
          ไม่ได้อยู่ใน scope FDD เลยสักบรรทัด เป็นของที่ทีมเดิมเขียนทิ้งไว้
          ไม่ลบโมเดลทิ้งเผื่อมีข้อมูลอยู่แล้ว แค่ซ่อนเมนูออก
     <menuitem id="menu_telematics_payload_inbox"

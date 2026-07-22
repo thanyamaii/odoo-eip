@@ -287,13 +287,11 @@
     </record>
 
     <!-- ============================================================
-         [แก้ไข 2026-07-06] เดิมเมนู "Fleet Summary" และ "Fuel Efficiency
-         Report" ใน Reports ชี้ไป action เดียวกันเป๊ะกับ "Trip Analytics"
-         (Trip Logs) และ "Fuel & Energy Analysis" (Dashboard) ตามลำดับ —
-         กดคนละเมนูแต่ได้หน้าจอเดียวกันทุก pixel ทำให้สับสน
-         แก้โดยสร้าง action แยกของตัวเองให้ Reports โดยเฉพาะ พร้อม
-         default grouping ที่ต่างออกไปให้มีประโยชน์ในตัวของมันเอง
-         (แนวทางเดียวกับที่ทำกับ Driver Score Report ไปแล้วด้านบน)
+         Reports > Fleet Summary และ Reports > Fuel Efficiency Report มี
+         action เป็นของตัวเอง แยกจาก "Trip Analytics" (เมนู Trip Logs) และ
+         "Fuel & Energy Analysis" (เมนู Dashboard) แม้จะดึงจากโมเดลเดียวกัน
+         — แต่ละ action ตั้ง default grouping ต่างกันให้มีประโยชน์เฉพาะตัว
+         (แนวทางเดียวกับ Driver Score Report ด้านบน)
          ============================================================ -->
 
     <!-- Reports > Fleet Summary — ภาพรวม fleet "รายวัน" (ตาม FDD:

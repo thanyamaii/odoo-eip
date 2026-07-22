@@ -1,15 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  views/portal_templates.xml  (เพิ่มใหม่ 2026-07-06)
+  views/portal_templates.xml
 
-  UC-11 — พนักงานดูคะแนนตนเอง (Self-service) ผ่าน Odoo Portal
-  (FDD §2.3: "พนักงานสามารถดูคะแนนตนเองแบบ Self-service ผ่าน Odoo Portal ได้")
-
-  ไฟล์นี้เคยถูกอ้างถึงใน __manifest__.py (data list) และใน
-  controllers/portal.py (request.render(...)) มาตั้งแต่แรก แต่ตัวไฟล์จริง
-  ไม่เคยถูกสร้างขึ้นมาเลย — ผลคือติดตั้งโมดูลจะ error (referenced XML ID
-  ไม่มีอยู่จริง) และต่อให้ข้าม manifest ไปได้ พอเข้า /my/telematics ก็จะ
-  เจอ ValueError: External ID not found ทันที เพิ่มไฟล์นี้เพื่อปิดช่องว่างนั้น
+  UC-11 — หน้าเว็บให้พนักงานขับรถล็อกอินดูคะแนน/โบนัสของตัวเอง (Odoo
+  Portal Self-service) — ดู controllers/portal.py
 -->
 <odoo>
 

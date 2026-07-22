@@ -1,26 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   security/telematics_groups.xml
-  UC-09 (แก้ไข 2026-07): เพิ่มกลุ่มสิทธิ์ "Executive (Read-only)"
+  เพิ่มกลุ่มสิทธิ์ "Executive (Read-only)" สำหรับผู้บริหารที่ต้องการดูข้อมูล
+  สรุปได้ แต่ไม่ต้องมีสิทธิ์อนุมัติ
 
   เดิมโมดูลนี้มีแค่ 2 กลุ่ม (fleet.fleet_group_user / fleet.fleet_group_manager)
-  ทำให้ไม่มีทางแยกสิทธิ์ "ผู้บริหารดูได้อย่างเดียว ไม่ใช้อนุมัติ" ตามที่ Use
-  Case Diagram (แก้ไขแล้ว) ต้องการ — กลุ่มนี้ต้องถูกโหลด "ก่อน"
-  ir.model.access.csv เสมอ (ดูลำดับ 'data' ใน __manifest__.py)
+  ทำให้ไม่มีทางแยกสิทธิ์ "ผู้บริหารดูได้อย่างเดียว ไม่ใช้อนุมัติ" — กลุ่มนี้
+  ต้องถูกโหลด "ก่อน" ir.model.access.csv เสมอ (ดูลำดับ 'data' ใน
+  __manifest__.py)
 
-  หมายเหตุสำคัญ: FDD §13/§14.1 ระบุว่า "Approve ได้เฉพาะ group_fleet_manager"
-  ไม่ได้แยก HR ออกจาก Manager เป็นคนละกลุ่ม — กลุ่ม Executive นี้จึงมีไว้
-  "เพิ่มเติม" สำหรับให้ผู้บริหารเข้าดูข้อมูลสรุปได้แบบ read-only เท่านั้น
-  ไม่ได้แทนที่ fleet_group_manager ที่เป็นคนอนุมัติจริง
+  หมายเหตุ: กลุ่ม Executive นี้มีไว้ "เพิ่มเติม" สำหรับให้ผู้บริหารเข้าดู
+  ข้อมูลสรุปได้แบบ read-only เท่านั้น ไม่ได้แทนที่ fleet_group_manager ที่
+  เป็นคนอนุมัติจริง
 -->
 <odoo>
 
     <!--
-      (แก้ 2026-07-06 รอบที่ 2 หลังพบ error ใหม่)
-      Odoo 19 restructure res.groups ใหม่ทั้งหมด: category_id (M2O ตรงไป
+      Odoo 19 restructure res.groups ใหม่: category_id (M2O ตรงไป
       ir.module.category) ถูกถอดออก แทนที่ด้วย privilege_id (M2O ไป
-      res.groups.privilege ตัวใหม่ ซึ่งค่อยไปอ้าง category_id อีกที) —
-      เปลี่ยนไปมาหลายรอบระหว่างเวอร์ชัน Odoo แบบนี้มาแล้ว 2 ครั้ง
+      res.groups.privilege ตัวใหม่ ซึ่งค่อยไปอ้าง category_id อีกที)
 
       ตัดสินใจ: ถอด category/privilege ออกทั้งหมด เพราะเป็นแค่ field จัด
       หมวดหมู่ให้สวยงามใน Settings > Users > Groups เท่านั้น ไม่กระทบการ

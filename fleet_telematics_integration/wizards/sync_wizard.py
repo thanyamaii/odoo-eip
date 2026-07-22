@@ -1,13 +1,12 @@
 # ==============================================================================
 # wizards/sync_wizard.py
-# ==============================================================================
-# (เพิ่มใหม่ 2026-07) Manual Sync Wizard — ตาม FDD §12.1 Module Structure ที่
-# ระบุไว้ตั้งแต่แรกว่าต้องมี "wizards/sync_wizard.py # Manual sync from API"
-# แต่ไม่เคยถูกสร้างเลยในของเดิม — Admin ไม่มีทางสั่ง sync trip เองได้ ต้องรอ
-# cron ทุก 5 นาทีอย่างเดียว (data/telematics_cron.xml)
 #
-# Wizard นี้เรียก fleet.telematics.log._cron_sync_trips() ตัวเดียวกับที่ Cron
-# เรียก ไม่ใช่ logic คนละชุด — เพื่อไม่ให้พฤติกรรมต่างจาก cron โดยไม่ตั้งใจ
+# UC-05 — หน้าต่างให้ Admin สั่ง Sync ทริปจาก Backend เองได้ทันที
+# ไม่ต้องรอตัวจับเวลาอัตโนมัติ (Cron) ที่รันทุก 5 นาที
+#
+# เรียกฟังก์ชันเดียวกับที่ Cron ใช้ (fleet.telematics.log._cron_sync_trips)
+# ตรงๆ เพื่อให้ผลลัพธ์เหมือนกันเป๊ะไม่ว่าจะสั่งเองหรือรอ Cron — ไม่มี logic
+# แยกชุดที่อาจทำงานไม่ตรงกัน
 # ==============================================================================
 import logging
 
@@ -17,6 +16,7 @@ _logger = logging.getLogger(__name__)
 
 
 class FleetTelematicsSyncWizard(models.TransientModel):
+    """หน้าต่างสั่ง Sync ทริปจาก Backend ด้วยมือ แสดงผลว่าได้ทริปใหม่กี่รายการ"""
     _name = 'fleet.telematics.sync.wizard'
     _description = 'Manual Sync from Backend API (UC-05 — สั่ง Sync เองได้ ไม่ต้องรอ Cron)'
 
@@ -24,14 +24,13 @@ class FleetTelematicsSyncWizard(models.TransientModel):
     last_sync_at   = fields.Datetime(string='Synced At', readonly=True)
 
     def action_sync_now(self):
-        """เรียก logic เดียวกับ Cron ตรงๆ (_cron_sync_trips) เพื่อให้ผลลัพธ์
-        เหมือนกันเป๊ะไม่ว่าจะสั่งเองหรือรอ Cron — ป้องกัน logic 2 ชุดที่อาจ
-        ทำงานไม่ตรงกันในอนาคต"""
+        """กดปุ่มแล้วเรียก _cron_sync_trips() ทันที นับจำนวนทริปที่เพิ่มขึ้น
+        มาก่อน-หลัง แล้วสรุปผลให้ Admin เห็นบนหน้าจอ"""
         self.ensure_one()
         Log = self.env['fleet.telematics.log']
-
         ICP = self.env['ir.config_parameter'].sudo()
-        before_ts = ICP.get_param('fleet_telematics.trip_last_poll_ts', '')
+
+        before_ts = ICP.get_param('fleet_telematics.trip_last_sync_timestamp', '')
         count_before = Log.search_count([])
 
         try:
@@ -44,7 +43,7 @@ class FleetTelematicsSyncWizard(models.TransientModel):
             })
             return self._reopen_wizard()
 
-        after_ts = ICP.get_param('fleet_telematics.trip_last_poll_ts', '')
+        after_ts = ICP.get_param('fleet_telematics.trip_last_sync_timestamp', '')
         count_after = Log.search_count([])
         new_trips = count_after - count_before
 
@@ -61,7 +60,7 @@ class FleetTelematicsSyncWizard(models.TransientModel):
         return self._reopen_wizard()
 
     def _reopen_wizard(self):
-        """เปิด wizard เดิมค้างไว้ให้เห็นผลลัพธ์ แทนที่จะปิดหน้าต่างทันที"""
+        """เปิดหน้าต่างเดิมค้างไว้ให้เห็นผลลัพธ์ แทนที่จะปิดทันทีหลังกดปุ่ม"""
         return {
             'type':     'ir.actions.act_window',
             'res_model': self._name,

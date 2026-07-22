@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  views/telematics_report_views.xml  (ไฟล์ใหม่)
-  UC-07/08 — ดึงรายงานสำเร็จรูปจาก Backend โดยตรง แทนการคำนวณซ้ำใน Odoo
+  views/telematics_report_views.xml
+  หน้าต่างดึงรายงานสำเร็จรูปจาก Backend โดยตรง แทนการคำนวณซ้ำใน Odoo
+  — ดู models/telematics_report.py :: TelematicsFuelEfficiencyReport
 -->
 <odoo>
 

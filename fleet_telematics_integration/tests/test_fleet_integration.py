@@ -10,6 +10,7 @@
 from unittest.mock import patch, MagicMock
 from datetime import datetime, date, timezone, timedelta
 
+from odoo import fields
 from odoo.tests.common import TransactionCase
 from odoo.exceptions import ValidationError, UserError
 
@@ -384,6 +385,13 @@ class TestUC02ScoringConfig(FleetTelematicsBase):
         self.assertFalse(cfg.is_locked)
         cfg.write({'last_push_at': '2026-07-08 10:00:00'})
         self.assertFalse(cfg.is_locked)   # เคย push แต่ inactive → ไม่ล็อก
+        # แก้ 2026-07-17: _make_scoring() ป้องกัน "Active ซ้อน" ให้อัตโนมัติ
+        # แค่ตอนสร้างใหม่ผ่าน helper เท่านั้น — ตรงนี้เรียก .write() ตรงๆ
+        # ทีหลัง ถ้าฐานข้อมูลมี config อื่น Active ค้างอยู่ก่อน (เช่นจากการ
+        # ทดสอบมือผ่าน UI จริงมาก่อนหน้า) จะชนกับ constraint ทันที ต้อง
+        # deactivate ของเดิมก่อนเหมือนที่ _make_scoring ทำให้ตอน create
+        self.env['fleet.telematics.scoring.config'].search(
+            [('active', '=', True), ('id', '!=', cfg.id)]).write({'active': False})
         cfg.write({'active': True})
         self.assertTrue(cfg.is_locked)
 
@@ -431,6 +439,44 @@ class TestUC02ScoringConfig(FleetTelematicsBase):
         self.assertTrue(cfg.last_push_at)
         self.assertIn('OK', cfg.last_push_status)
 
+    # ── เพิ่มตาม FDD §12.3/§12.5: Tier D fields + History tracking ────────
+    def test_21_tier_d_fields_exist_and_editable(self):
+        """Tier D ต้องมี field ปรับได้เหมือน A/B/C (ไม่ใช่ hardcode) และ
+        ล็อกเมื่อ Active=True เหมือนฟิลด์เกณฑ์อื่น"""
+        cfg = self._make_scoring('UC02-21', active=False)
+        cfg.write({'tier_d_bonus_pct': 2.5})
+        self.assertEqual(cfg.tier_d_bonus_pct, 2.5)
+
+        self.env['fleet.telematics.scoring.config'].search(
+            [('active', '=', True), ('id', '!=', cfg.id)]).write({'active': False})
+        cfg.write({'active': True})
+        with self.assertRaises(UserError):
+            cfg.write({'tier_d_bonus_pct': 5.0})
+
+    def test_22_tier_d_bonus_negative_raises(self):
+        """% โบนัส Tier D ติดลบต้อง raise"""
+        with self.assertRaises(ValidationError):
+            self._make_scoring('UC02-22', active=False, tier_d_bonus_pct=-1.0)
+
+    def test_23_history_created_date_auto_set(self):
+        """created_date ต้องตั้งค่าอัตโนมัติตอนสร้าง record ใหม่"""
+        cfg = self._make_scoring('UC02-23', active=False)
+        self.assertTrue(cfg.created_date)
+
+    def test_24_history_starts_zero(self):
+        """total_trips_calculated ต้องเริ่มที่ 0 ตอนสร้างใหม่"""
+        cfg = self._make_scoring('UC02-24', active=False)
+        self.assertEqual(cfg.total_trips_calculated, 0)
+        self.assertFalse(cfg.last_used_date)
+
+    def test_25_track_usage_updates_active_config(self):
+        """_track_usage() ต้องอัปเดตเฉพาะ config ที่ Active อยู่เท่านั้น"""
+        cfg = self._make_scoring('UC02-25', active=True)
+        Config = self.env['fleet.telematics.scoring.config']
+        Config._track_usage(count=3)
+        self.assertEqual(cfg.total_trips_calculated, 3)
+        self.assertTrue(cfg.last_used_date)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # UC-04 — GPS Poll + Dedup + Batch  (telematics_log.py section [I]–[N])
@@ -438,90 +484,103 @@ class TestUC02ScoringConfig(FleetTelematicsBase):
 
 class TestUC04TripSync(FleetTelematicsBase):
     """
-    ครอบคลุม:
-      - _get_poll_window() Cold Start และ Warm Start
-      - _filter_new_trips() กรอง existing IDs ออก (Dedup ชั้น 2)
-      - _build_trip_vals() แปลง dict → vals ถูกต้อง
-      - _build_trip_vals() device ไม่มีในระบบ → คืน {}
-      - _cron_sync_trips() สร้าง trip ใหม่
-      - _cron_sync_trips() ไม่ duplicate เมื่อรัน 2 รอบ (Dedup ชั้น 1+2)
-      - _cron_sync_trips() write existing trip (ไม่ create ใหม่)
-      - _cron_sync_trips() บันทึก last_poll_ts หลัง sync
-      - _sql_constraints UNIQUE(external_trip_id) มีอยู่ (Dedup ชั้น 3)
+    แก้ 2026-07-17: เขียนใหม่ทั้งคลาส — เวอร์ชันเดิมอ้างอิงเมธอด
+    _get_poll_window()/_filter_new_trips() ที่ไม่มีอยู่จริงในโค้ด (ถูกออกแบบ
+    ไว้ก่อน implement จริง แล้วไม่เคยอัปเดต test ตาม) และ mock ผิด HTTP verb
+    (patch requests.get ทั้งที่โค้ดจริงยิง requests.post) ยืนยันจาก error จริง
+    ตอนรันบน Odoo 19: AttributeError ทั้งคู่ + "External requests verboten"
+    (เพราะ mock ไม่ตรง เลยยิง POST จริงหลุดออกไป)
+
+    ครอบคลุมของจริงตามโค้ดปัจจุบัน:
+      - _fetch_trips_batch() ยิง POST /api/v1/webhook/odoo-sync ถูก endpoint/body
+      - _build_trip_vals() แปลง dict (schema จริงจาก Backend) → vals ถูกต้อง
+      - _build_trip_vals() ไม่พบรถ (ทั้ง vehicle_id และ device_id) → คืน {}
+      - _cron_sync_trips() สร้าง trip ใหม่ (มี POST+PATCH mock ครบ)
+      - _cron_sync_trips() ไม่ duplicate เมื่อรัน 2 รอบ
+      - _cron_sync_trips() write existing trip แทน create
+      - _cron_sync_trips() บันทึก trip_last_sync_timestamp (ชื่อ param จริง
+        คือ fleet_telematics.trip_last_sync_timestamp ไม่ใช่ trip_last_poll_ts
+        แบบที่เทสเดิมเช็ค)
+      - UNIQUE(external_trip_id) บังคับจริงผ่าน models.Constraint (Odoo 19)
       - _cron_sync_trips() เมื่อไม่มี API URL → ไม่ raise
     """
+
+    _PARAM = 'fleet_telematics.trip_last_sync_timestamp'
 
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
         ICP = cls.env['ir.config_parameter'].sudo()
-        ICP.set_param('fleet_telematics.trip_last_poll_ts', '')
+        ICP.set_param(cls._PARAM, '')
 
     def setUp(self):
         super().setUp()
-        # รีเซ็ต last_poll_ts ก่อนแต่ละ test
-        self.env['ir.config_parameter'].sudo().set_param(
-            'fleet_telematics.trip_last_poll_ts', '')
+        self.env['ir.config_parameter'].sudo().set_param(self._PARAM, '')
 
-    def test_01_get_poll_window_cold_start(self):
-        """Cold Start (ไม่มี last_poll_ts) → since ≈ now-5min, until ≈ now"""
-        Log      = self.env['fleet.telematics.log']
-        before   = datetime.now(timezone.utc)
-        since, until = Log._get_poll_window()
-        after    = datetime.now(timezone.utc)
+    def _make_trip_dict(self, ext_id, vehicle_id=None, device_id='KTC-BASE-01',
+                         driver_id=None, **kw):
+        """dict จำลอง trip ตาม schema จริงที่ _build_trip_vals() คาดหวัง
+        (ไม่ใช่ schema เดิมที่ทดสอบสมมติไว้ผิด — สาเหตุของ KeyError เดิม)"""
+        data = {
+            'id':               ext_id,
+            'vehicle_id':       self.v1.id if vehicle_id is None else vehicle_id,
+            'device_id':        device_id,
+            'driver_id':        self.employee.id if driver_id is None else driver_id,
+            'trip_start':       '2026-06-10T08:00:00+00:00',
+            'trip_end':         '2026-06-10T09:00:00+00:00',
+            'distance_km':      50.0,
+            'avg_speed':        60.0,
+            'max_speed':        90.0,
+            'idle_min':         5.0,
+            'fuel_used':        4.5,
+            'driver_score':     85.0,
+            'harsh_brake_count':  1,
+            'harsh_accel_count':  0,
+            'harsh_corner_count': 2,
+            'speeding_count':     1,
+            'gps_track_json':   '[]',
+        }
+        data.update(kw)
+        return data
 
-        # until อยู่ระหว่าง before และ after
-        self.assertGreaterEqual(until, before)
-        self.assertLessEqual(until, after + timedelta(seconds=1))
+    def _mock_post(self, trips, last_ts='2026-06-10T10:00:00+00:00', total=None):
+        r = MagicMock()
+        r.json.return_value = {
+            'trips': trips,
+            'last_sync_timestamp': last_ts,
+            'total': total if total is not None else len(trips),
+        }
+        r.raise_for_status.return_value = None
+        return r
 
-        # since ≈ until - 5 นาที (tolerance 10 วินาที)
-        delta = abs((until - since).total_seconds() - 300)
-        self.assertLess(delta, 10, f"since ต้องห่าง until ~5 นาที (delta={delta}s)")
+    def _mock_patch(self):
+        r = MagicMock()
+        r.raise_for_status.return_value = None
+        return r
 
-    def test_02_get_poll_window_warm_start(self):
-        """Warm Start → since ตรงกับ last_poll_ts ที่บันทึกไว้"""
-        ICP      = self.env['ir.config_parameter'].sudo()
-        fixed_ts = datetime(2025, 6, 10, 8, 0, 0, tzinfo=timezone.utc)
-        ICP.set_param('fleet_telematics.trip_last_poll_ts', fixed_ts.isoformat())
-
-        Log  = self.env['fleet.telematics.log']
-        since, until = Log._get_poll_window()
-
-        self.assertEqual(
-            since.replace(tzinfo=timezone.utc), fixed_ts,
-            "since ต้องตรงกับ last_poll_ts ที่บันทึกไว้"
-        )
-        self.assertGreater(until, since)
-
-    def test_03_filter_new_trips_dedup(self):
-        """_filter_new_trips() กรอง trip ที่มีใน DB แล้ว — คืนเฉพาะรายการใหม่"""
+    def test_01_fetch_trips_batch_calls_correct_endpoint(self):
+        """_fetch_trips_batch() ยิง POST ไปที่ endpoint ที่ถูกต้อง"""
         Log = self.env['fleet.telematics.log']
+        with patch('requests.post', return_value=self._mock_post([])) as mock_post:
+            trips, new_ts, total = Log._fetch_trips_batch(
+                'http://test-backend:8001', 'TEST-KEY', None)
+        self.assertEqual(
+            mock_post.call_args[0][0],
+            'http://test-backend:8001/api/v1/webhook/odoo-sync')
+        self.assertEqual(trips, [])
 
-        # สร้าง trip เดิมใน DB ก่อน
-        Log.create({
-            'external_trip_id': 'FILTER-OLD',
-            'vehicle_id':  self.v1.id,
-            'driver_id':   self.employee.id,
-            'trip_start':  '2025-06-10 08:00:00',
-            'state':       'synced',
-        })
+    def test_02_fetch_trips_batch_sends_last_ts_when_present(self):
+        """ถ้ามี last_ts ต้องส่งไปใน body ชื่อ last_sync_timestamp"""
+        Log = self.env['fleet.telematics.log']
+        with patch('requests.post', return_value=self._mock_post([])) as mock_post:
+            Log._fetch_trips_batch(
+                'http://test-backend:8001', 'TEST-KEY', '2026-06-01T00:00:00+00:00')
+        sent_body = mock_post.call_args.kwargs.get('json', {})
+        self.assertEqual(
+            sent_body.get('last_sync_timestamp'), '2026-06-01T00:00:00+00:00')
 
-        trips = [
-            self._make_trip_dict('FILTER-OLD'),   # มีอยู่แล้ว
-            self._make_trip_dict('FILTER-NEW-1'), # ใหม่
-            self._make_trip_dict('FILTER-NEW-2'), # ใหม่
-        ]
-        new_trips, existing_map = Log._filter_new_trips(trips)
-
-        self.assertEqual(len(new_trips), 2)
-        self.assertIn('FILTER-OLD', existing_map)
-        new_ids = [t['trip_id'] for t in new_trips]
-        self.assertNotIn('FILTER-OLD',   new_ids)
-        self.assertIn('FILTER-NEW-1', new_ids)
-        self.assertIn('FILTER-NEW-2', new_ids)
-
-    def test_04_build_trip_vals_ok(self):
-        """_build_trip_vals() แปลง dict → vals ครบถูกต้อง"""
+    def test_03_build_trip_vals_ok(self):
+        """_build_trip_vals() แปลง dict (schema จริง) → vals ครบถูกต้อง"""
         Log  = self.env['fleet.telematics.log']
         vals = Log._build_trip_vals(self._make_trip_dict('VALS-001'))
 
@@ -530,45 +589,45 @@ class TestUC04TripSync(FleetTelematicsBase):
         self.assertEqual(vals['distance_km'],       50.0)
         self.assertEqual(vals['state'],             'synced')
 
-    def test_05_build_trip_vals_unknown_device_empty(self):
-        """_build_trip_vals() device ไม่มีในระบบ → คืน {} (caller จะ skip)"""
+    def test_04_build_trip_vals_unknown_vehicle_empty(self):
+        """_build_trip_vals() ไม่พบรถทั้งจาก vehicle_id และ device_id → คืน {}"""
         Log  = self.env['fleet.telematics.log']
-        vals = Log._build_trip_vals(
-            self._make_trip_dict('VALS-X', device='DEVICE-NOTEXIST'))
+        vals = Log._build_trip_vals(self._make_trip_dict(
+            'VALS-X', vehicle_id=999999999, device_id='DEVICE-NOTEXIST'))
         self.assertEqual(vals, {})
 
-    def test_06_cron_creates_new_trips(self):
-        """_cron_sync_trips() สร้าง trip ใหม่จาก API response"""
+    def test_05_cron_creates_new_trips(self):
+        """_cron_sync_trips() สร้าง trip ใหม่จาก API response (mock POST+PATCH)"""
         Log   = self.env['fleet.telematics.log']
-        trips = [
-            self._make_trip_dict('CRON-C01'),
-            self._make_trip_dict('CRON-C02'),
-        ]
+        trips = [self._make_trip_dict('CRON-C01'), self._make_trip_dict('CRON-C02')]
         before = Log.search_count(
             [('external_trip_id', 'in', ['CRON-C01', 'CRON-C02'])])
 
-        with patch('requests.get', return_value=self._mock_api(trips)):
-            with patch('time.sleep'):
+        with patch('requests.post', return_value=self._mock_post(trips)):
+            with patch('requests.patch', return_value=self._mock_patch()):
                 Log._cron_sync_trips()
 
         after = Log.search_count(
             [('external_trip_id', 'in', ['CRON-C01', 'CRON-C02'])])
         self.assertEqual(after - before, 2, "ต้องสร้าง 2 trips ใหม่")
 
-    def test_07_cron_no_duplicate_on_second_run(self):
-        """Dedup ชั้น 1+2: รัน Cron 2 รอบ → บันทึกแค่ครั้งเดียว"""
+    def test_06_cron_no_duplicate_on_second_run(self):
+        """รัน Cron 2 รอบ → รอบ 2 ไม่มี trip ใหม่ (Backend คืน []) → บันทึกแค่ครั้งเดียว"""
         Log   = self.env['fleet.telematics.log']
         trips = [self._make_trip_dict('CRON-D01')]
 
-        with patch('requests.get', return_value=self._mock_api(trips)):
-            with patch('time.sleep'):
-                Log._cron_sync_trips()   # รอบ 1
-                Log._cron_sync_trips()   # รอบ 2 (since ≥ until รอบ 1 → API คืน [])
+        with patch('requests.post', return_value=self._mock_post(trips)):
+            with patch('requests.patch', return_value=self._mock_patch()):
+                Log._cron_sync_trips()   # รอบ 1: สร้าง CRON-D01
+
+        with patch('requests.post', return_value=self._mock_post([])):
+            with patch('requests.patch', return_value=self._mock_patch()):
+                Log._cron_sync_trips()   # รอบ 2: Backend ไม่มี trip ใหม่แล้ว
 
         count = Log.search_count([('external_trip_id', '=', 'CRON-D01')])
         self.assertEqual(count, 1, "ต้องมีแค่ 1 record ไม่ซ้ำ")
 
-    def test_08_cron_updates_existing_trip(self):
+    def test_07_cron_updates_existing_trip(self):
         """_cron_sync_trips() trip ที่มีอยู่แล้ว → write() แทน create()"""
         Log = self.env['fleet.telematics.log']
         Log.create({
@@ -581,8 +640,8 @@ class TestUC04TripSync(FleetTelematicsBase):
         })
         trip = self._make_trip_dict('CRON-U01', distance_km=99.0)
 
-        with patch('requests.get', return_value=self._mock_api([trip])):
-            with patch('time.sleep'):
+        with patch('requests.post', return_value=self._mock_post([trip])):
+            with patch('requests.patch', return_value=self._mock_patch()):
                 Log._cron_sync_trips()
 
         rec = Log.search([('external_trip_id', '=', 'CRON-U01')], limit=1)
@@ -590,33 +649,44 @@ class TestUC04TripSync(FleetTelematicsBase):
         self.assertAlmostEqual(rec.distance_km, 99.0,
                                msg="ต้อง update distance_km เป็นค่าใหม่")
 
-    def test_09_cron_saves_last_poll_ts(self):
-        """หลัง _cron_sync_trips() ต้องบันทึก last_poll_ts ใน ir.config_parameter"""
+    def test_08_cron_saves_last_sync_timestamp(self):
+        """หลัง _cron_sync_trips() ต้องบันทึก trip_last_sync_timestamp ใน
+        ir.config_parameter (ต้องมี trip อย่างน้อย 1 รายการ ไม่งั้น loop จะ
+        break ก่อนถึงจุดบันทึกค่า — ดู comment ในโค้ดจริงขั้นที่ 5)"""
         Log = self.env['fleet.telematics.log']
         ICP = self.env['ir.config_parameter'].sudo()
+        trip = self._make_trip_dict('CRON-TS01')
 
-        with patch('requests.get', return_value=self._mock_api([])):
-            with patch('time.sleep'):
+        with patch('requests.post', return_value=self._mock_post(
+                [trip], last_ts='2026-06-15T12:00:00+00:00')):
+            with patch('requests.patch', return_value=self._mock_patch()):
                 Log._cron_sync_trips()
 
-        ts = ICP.get_param('fleet_telematics.trip_last_poll_ts', '')
-        self.assertTrue(ts, "ต้องบันทึก last_poll_ts หลัง Cron ทำงาน")
-        # ตรวจว่า parse ได้ (format ถูก)
-        try:
-            datetime.fromisoformat(ts)
-        except ValueError:
-            self.fail(f"last_poll_ts ต้องเป็น ISO format (ได้: {ts})")
+        ts = ICP.get_param(self._PARAM, '')
+        self.assertEqual(ts, '2026-06-15T12:00:00+00:00')
 
-    def test_10_sql_unique_constraint_on_external_trip_id(self):
-        """Dedup ชั้น 3: _sql_constraints ต้องมี UNIQUE(external_trip_id)"""
-        Log         = self.env['fleet.telematics.log']
-        constraints = [c[1].upper() for c in Log._sql_constraints]
-        self.assertTrue(
-            any('EXTERNAL_TRIP_ID' in c for c in constraints),
-            "_sql_constraints ต้องมี UNIQUE บน external_trip_id"
-        )
+    def test_09_sql_unique_constraint_on_external_trip_id(self):
+        """Dedup ชั้นสุดท้าย: ต้องมี UNIQUE บน external_trip_id บังคับใช้จริง
+        แก้ 2026-07-17: Odoo 19 เลิกใช้ _sql_constraints (list of tuple) แล้ว
+        (ยืนยันจาก warning จริงตอน module load) เปลี่ยนโค้ดจริงไปใช้
+        models.Constraint() แทน — แต่ไม่มั่นใจ 100% ว่า attribute ภายในของ
+        Constraint object ชื่ออะไรแน่ (เช่น .string/.definition) จึงเลี่ยงไป
+        ทดสอบเชิงพฤติกรรมแทน (สร้างซ้ำจริงแล้วดูว่า error จริงไหม) แม่นยำ
+        กว่าการเดา attribute name ภายใน"""
+        Log = self.env['fleet.telematics.log']
+        Log.create({
+            'external_trip_id': 'UNIQUE-TEST-01',
+            'vehicle_id': self.v1.id,
+            'trip_start': '2026-01-01 08:00:00',
+        })
+        with self.assertRaises(Exception):
+            Log.create({
+                'external_trip_id': 'UNIQUE-TEST-01',
+                'vehicle_id': self.v1.id,
+                'trip_start': '2026-01-02 08:00:00',
+            })
 
-    def test_11_cron_no_api_url_skips_gracefully(self):
+    def test_10_cron_no_api_url_skips_gracefully(self):
         """ไม่มี API URL → _cron_sync_trips() ต้องไม่ raise exception"""
         ICP = self.env['ir.config_parameter'].sudo()
         ICP.set_param('fleet_telematics.mtd_api_url', '')
@@ -793,10 +863,33 @@ class TestUC10IncentiveAuditLog(FleetTelematicsBase):
         inc.action_export_to_appraisal()
         self.assertGreater(len(self.employee.message_ids), n_before)
 
+    def test_18_notify_hr_new_drafts_batch_posts_message(self):
+        """_notify_hr_new_drafts_batch() ต้องบันทึกข้อความลง chatter ของ
+        record แรกในกลุ่ม (ตาม FDD §12.4 ขั้นตอน 4: แจ้ง HR ทุกครั้งที่มี
+        draft ใหม่ ไม่ใช่แค่ตอน Tier D เท่านั้น)"""
+        inc1 = self._make_incentive(date_from=date(2026, 3, 1), date_to=date(2026, 3, 31))
+        inc2 = self._make_incentive(
+            driver_id=self.env['hr.employee'].create({'name': 'Second Driver'}).id,
+            date_from=date(2026, 3, 1), date_to=date(2026, 3, 31))
+        batch = inc1 + inc2
+        n_before = len(inc1.message_ids)
+        batch._notify_hr_new_drafts_batch(3, 2026)
+        self.assertGreater(len(inc1.message_ids), n_before)
+
+    def test_19_local_tier_fallback_uses_configured_tier_d_bonus_pct(self):
+        """_local_tier_from_score() (ใช้ตอนเรียก Backend ไม่สำเร็จ) ต้องอ่าน
+        tier_d_bonus_pct จาก Scoring Config จริง ไม่ใช่ hardcode เป็น 0.0
+        เสมอ — ถ้า Admin ตั้งค่าไว้ไม่ใช่ 0 ผลลัพธ์ fallback ต้องตรงกัน"""
+        cfg = self._make_scoring('UC10-19', active=True, tier_c_min_score=60.0,
+                                  tier_d_bonus_pct=2.5)
+        inc = self._make_incentive(avg_score=40.0, scoring_config_id=cfg.id)
+        tier, pct = inc._local_tier_from_score(return_pct=True)
+        self.assertEqual(tier, 'D')
+        self.assertEqual(pct, 2.5)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # UC-12 — Verify Device (GET /vehicles/{id}/device) — fleet_vehicle_ext.py
-#   เพิ่มใหม่ 2026-07-06
 # ══════════════════════════════════════════════════════════════════════════════
 
 class TestUC12VerifyDevice(FleetTelematicsBase):
@@ -826,18 +919,34 @@ class TestUC12VerifyDevice(FleetTelematicsBase):
         self.assertIn('KTC-DIFFERENT-99', self.v1.device_verify_note)
 
     def test_03_backend_404_raises_and_flags_mismatch_if_odoo_has_device(self):
+        """ใช้ try/except ธรรมดาแทน self.assertRaises() ของ Odoo — เพราะ
+        self.assertRaises() ของ Odoo (TransactionCase) ตั้ง savepoint ก่อน
+        เข้า block แล้ว rollback กลับไปที่ savepoint นั้นทันทีที่จับ
+        exception ที่คาดไว้ได้เสมอ (ออกแบบมาเพื่อกันโค้ดที่ทดสอบ error ทิ้ง
+        ข้อมูลเพี้ยนไว้) ซึ่งจะ rollback การ write() ของ
+        action_verify_device() ทิ้งไปด้วยทั้งที่ตั้งใจให้ mismatch flag รอด
+        อยู่เป็นหลักฐาน — try/except ของ Python เฉยๆ ไม่มีกลไกนี้ จึงใช้
+        แทนได้ถูกต้องกว่าสำหรับเคสนี้โดยเฉพาะ"""
         from odoo.exceptions import UserError
         with patch('requests.get', return_value=self._mock_resp(404)):
-            with self.assertRaises(UserError):
+            try:
                 self.v1.action_verify_device()
+                self.fail('คาดว่าต้อง raise UserError แต่ไม่ raise')
+            except UserError:
+                pass
         self.assertTrue(self.v1.device_verify_mismatch)
 
     def test_04_connection_error_raises_and_flags_mismatch(self):
+        """เหตุผลเดียวกับ test_03 — ใช้ try/except แทน self.assertRaises()
+        ของ Odoo เพื่อไม่ให้ค่าที่ write() ไว้ก่อน raise ถูก rollback ทิ้ง"""
         import requests as _requests
         from odoo.exceptions import UserError
         with patch('requests.get', side_effect=_requests.RequestException('timeout')):
-            with self.assertRaises(UserError):
+            try:
                 self.v1.action_verify_device()
+                self.fail('คาดว่าต้อง raise UserError แต่ไม่ raise')
+            except UserError:
+                pass
         self.assertTrue(self.v1.device_verify_mismatch)
         self.assertIn('เรียก Backend ไม่สำเร็จ', self.v1.device_verify_note)
 
@@ -860,12 +969,24 @@ class TestUC12ReconcileDevices(FleetTelematicsBase):
         return r
 
     def test_01_all_matching_zero_mismatch(self):
+        # แก้ 2026-07-17: เดิมเช็ค device_mismatch_count == 0 ตรงๆ ซึ่งใช้ได้
+        # แค่ในฐานข้อมูลว่างเปล่าเท่านั้น — action_reconcile_devices()
+        # ตรวจสอบ "ทุกรถที่มี telematics_device_id" ในระบบทั้งหมดโดยออกแบบ
+        # ไว้แบบนั้นจริง (ถูกต้องแล้วสำหรับใช้งานจริง) แต่ถ้ารันบนฐานข้อมูล
+        # ที่มีรถจริงอยู่ก่อนแล้ว (เช่น KTC-001 ถึง KTC-010 จากการทดสอบมือ)
+        # การ mock ให้ Backend มีแค่ 1 device จะทำให้รถจริงที่เหลือถูกนับเป็น
+        # mismatch ไปด้วย (ไม่ใช่บั๊กของฟังก์ชัน แค่ test เดิมไม่ทนต่อข้อมูล
+        # ที่มีอยู่ก่อน) เปลี่ยนไปเช็คเฉพาะว่า "รถทดสอบของเราเอง (self.v1)
+        # ต้องไม่ถูก flag เป็น mismatch" แทนการเช็ค total count ทั้งระบบ
         config = self._get_config()
         with patch('requests.get', return_value=self._mock_resp(
                 [{'device_id': 'KTC-BASE-01', 'vehicle_id': self.v1.id}])):
             config.action_reconcile_devices()
-        self.assertEqual(config.device_mismatch_count, 0)
         self.assertTrue(config.last_reconciled_at)
+        self.assertNotIn(
+            self.v1.license_plate, config.device_mismatch_note or '',
+            "รถทดสอบ (self.v1) ที่ข้อมูลตรงกับ Backend ต้องไม่ถูกนับเป็น mismatch"
+        )
 
     def test_02_vehicle_id_mismatch_detected(self):
         config = self._get_config()

@@ -1,13 +1,13 @@
 # ==============================================================================
 # models/telematics_vehicle_trip.py
 #
-# Wizard: Vehicle Trip History — ดึงประวัติการเดินทางของรถรายคัน
-# เรียก GET /api/v1/vehicles/{vehicle_id}/trips จาก Backend โดยตรง
+# Wizard: Vehicle Trip History — ดึงประวัติการเดินทางของรถรายคันจาก Backend
+# โดยตรง (GET /api/v1/vehicles/{vehicle_id}/trips)
 #
 # ต่างจาก Trip Logs (fleet.telematics.log) ที่มีอยู่แล้วตรงที่:
-# - ดึงข้อมูลสดจาก Backend ทุก trip รวมถึงที่ยังไม่ได้ sync เข้า Odoo
-# - กรองตาม date_from/date_to และ synced_only ได้
-# - แสดงพฤติกรรมการขับขี่รายทริป (driver_score, harsh events, speeding)
+# - ดึงข้อมูลสดจาก Backend ทุกทริป รวมถึงที่ยังไม่ได้ sync เข้า Odoo
+# - กรองตามช่วงวันที่ และเลือกได้ว่าจะเอาเฉพาะที่ sync แล้วหรือไม่
+# - Export เป็น Excel/CSV ได้
 # ==============================================================================
 import json
 import logging
@@ -20,23 +20,23 @@ _logger = logging.getLogger(__name__)
 
 
 class TelematicsVehicleTripHistory(models.TransientModel):
+    """หน้าต่างค้นหา+ดึงประวัติทริปของรถ 1 คัน จาก Backend สด พร้อม export
+    เป็นไฟล์ Excel/CSV ได้"""
     _name        = 'fleet.telematics.vehicle.trip.history'
     _description = 'Vehicle Trip History (ดึงจาก Backend โดยตรง)'
 
-    # ── Filter fields ──────────────────────────────────────────────────────────
-    # เดิม: vehicle_id เป็น Integer ให้พิมพ์เลข ID หลังบ้านตรงๆ (ผู้ใช้ทั่วไปไม่รู้เลข ID)
-    # แก้: เปลี่ยนเป็น Many2one → ผู้ใช้ค้นหา/เลือกได้จากชื่อรุ่นรถ, ทะเบียนรถ
-    #      หรือชื่อคนขับ (name_search ของ fleet.vehicle รองรับค้นด้วย license_plate
-    #      และ driver_id.name อยู่แล้วเป็นค่า default ของ core Odoo)
-    #      หมายเหตุ: Backend ใช้ Odoo record id ของ fleet.vehicle เป็น vehicle_id
-    #      โดยตรงอยู่แล้ว (ดู models/telematics_log.py) จึงใช้ .id ส่งต่อได้เลย
+    # ค้นหา/เลือกรถได้จากชื่อรุ่น ทะเบียน หรือชื่อคนขับ (name_search ของ
+    # fleet.vehicle รองรับอยู่แล้วเป็นค่ามาตรฐานของ Odoo) — Backend ใช้
+    # Odoo record id ของ fleet.vehicle เป็น vehicle_id โดยตรงอยู่แล้ว จึง
+    # ส่ง .id ต่อไปได้เลยไม่ต้องแปลง
     vehicle_id = fields.Many2one(
         'fleet.vehicle',
         string='รถ',
-        required=True,
-        help='ค้นหาและเลือกรถจาก ชื่อรุ่นรถ / ทะเบียนรถ / ชื่อพนักงานขับรถ',
+        help='ค้นหาและเลือกรถจาก ชื่อรุ่นรถ / ทะเบียนรถ / ชื่อพนักงานขับรถ '
+             '— ตรวจสอบว่าเลือกแล้วหรือยังใน action_fetch() แทนการบังคับที่ '
+             'ระดับฐานข้อมูล เพื่อให้แจ้งเตือนด้วยข้อความที่เข้าใจง่ายกว่า',
     )
-    # ฟิลด์ readonly ไว้ยืนยันข้อมูลรถที่เลือก (แสดงควบคู่กับ vehicle_id)
+    # field readonly ไว้ยืนยันข้อมูลรถที่เลือก แสดงคู่กับ vehicle_id
     vehicle_license_plate = fields.Char(
         string='ทะเบียนรถ', related='vehicle_id.license_plate', readonly=True)
     driver_id = fields.Many2one(
@@ -54,13 +54,13 @@ class TelematicsVehicleTripHistory(models.TransientModel):
     page  = fields.Integer(string='หน้า', default=1)
     limit = fields.Integer(string='จำนวนต่อหน้า', default=20)
 
-    # ── Result fields ──────────────────────────────────────────────────────────
     result_html  = fields.Html(string='ผลลัพธ์', readonly=True, sanitize=False)
     total_trips  = fields.Integer(string='Trip ทั้งหมด', readonly=True)
     total_pages  = fields.Integer(string='จำนวนหน้า', readonly=True)
     has_result   = fields.Boolean(default=False)
 
     def _api(self):
+        """ดึง API URL/Key ที่ใช้งานอยู่ตอนนี้ — error ทันทีถ้ายังไม่ตั้งค่า"""
         Config  = self.env['fleet.telematics.config']
         api_url = Config.get_active_api_url()
         api_key = Config.get_active_api_key()
@@ -69,20 +69,20 @@ class TelematicsVehicleTripHistory(models.TransientModel):
         return api_url, api_key
 
     def action_fetch(self):
+        """ดึงประวัติทริปของรถที่เลือก ตามช่วงวันที่/ตัวกรองที่ตั้งไว้ —
+        เช็คก่อนว่ารถคันนี้มี GPS Device ผูกอยู่หรือยัง (ถ้าไม่มี Backend
+        จะไม่มีทริปให้ดึงแน่นอน จึงเตือนตั้งแต่ต้นแทนที่จะปล่อยให้ผลลัพธ์
+        ว่างเปล่าแบบงงๆ)"""
         self.ensure_one()
         if not self.vehicle_id:
             raise UserError('กรุณาเลือกรถก่อน (ค้นหาจากชื่อรถ/ทะเบียน/คนขับ)')
 
-        # ── ข้อ 3: ตรวจสอบว่ารถคันนี้ผูก GPS Device ไว้แล้วหรือยัง ──────────────
-        # เพราะ Backend อ้างอิงทริปตามบอร์ด GPS ที่ผูกกับรถ ถ้ายังไม่ลงทะเบียน
-        # device จะดึงทริปไม่ได้เลย (หรือได้ผลลัพธ์ว่าง) — เตือนผู้ใช้ก่อนยิง API
         if not self.vehicle_id.telematics_device_id:
             raise UserError(
                 f'รถ "{self.vehicle_id.display_name}" ยังไม่ได้ผูก GPS Device — '
                 'กรุณาลงทะเบียน Device ที่หน้ารถ (ปุ่ม Register Device) ก่อนดึงประวัติ'
             )
 
-        # ถ้ายังไม่มี id ให้ save ก่อน
         if not self.id:
             self = self.create({
                 'vehicle_id':  self.vehicle_id.id,
@@ -131,7 +131,6 @@ class TelematicsVehicleTripHistory(models.TransientModel):
             'result_html':  self._render_trips(trips, total, total_pages),
         })
 
-        # reload หน้าเดิม (current) ไม่เปิด popup ใหม่
         return {
             'type':      'ir.actions.act_window',
             'res_model': self._name,
@@ -141,26 +140,29 @@ class TelematicsVehicleTripHistory(models.TransientModel):
         }
 
     def action_prev_page(self):
+        """ย้อนกลับไปหน้าก่อนหน้า แล้วดึงข้อมูลใหม่"""
         self.ensure_one()
         if self.page > 1:
             self.page -= 1
         return self.action_fetch()
 
     def action_next_page(self):
+        """ไปหน้าถัดไป แล้วดึงข้อมูลใหม่"""
         self.ensure_one()
         if self.page < self.total_pages:
             self.page += 1
         return self.action_fetch()
 
     def action_export_excel(self):
-        """Export trip data to Excel — ดาวน์โหลดรายงานพฤติกรรมการขับขี่"""
+        """ดึงทริปทั้งหมด (สูงสุด 200 รายการ) ตามตัวกรองที่ตั้งไว้ แล้ว
+        Export เป็นไฟล์ Excel ให้ดาวน์โหลด — ถ้าไม่มี xlsxwriter ในเครื่อง
+        (ไม่ควรเกิดเพราะ Odoo มีมาให้ทุกเวอร์ชัน) จะ fallback เป็น CSV แทน"""
         self.ensure_one()
         if not self.vehicle_id:
             raise UserError('กรุณาเลือกรถก่อน')
 
         api_url, api_key = self._api()
 
-        # ดึงข้อมูลทั้งหมด (limit 200 สูงสุดต่อ request)
         params = {'page': 1, 'limit': 200}
         if self.date_from:
             params['date_from'] = self.date_from.strftime('%Y-%m-%dT00:00:00')
@@ -191,7 +193,6 @@ class TelematicsVehicleTripHistory(models.TransientModel):
         import io
         import base64
 
-        # ใช้ xlsxwriter ซึ่งมาพร้อม Odoo ทุกเวอร์ชัน
         try:
             import xlsxwriter
             buf = io.BytesIO()
@@ -280,7 +281,7 @@ class TelematicsVehicleTripHistory(models.TransientModel):
             mimetype = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
         except ImportError:
-            # Fallback: CSV ถ้าไม่มี xlsxwriter
+            # ไม่มี xlsxwriter ในเครื่อง → ทำเป็น CSV แทน
             import csv
             buf = io.StringIO()
             writer = csv.writer(buf)
@@ -323,6 +324,8 @@ class TelematicsVehicleTripHistory(models.TransientModel):
         }
 
     def _render_trips(self, trips, total, total_pages):
+        """แปลงรายการทริปที่ได้จาก Backend เป็นตาราง HTML แสดงในหน้าจอ
+        ระบายสีคะแนนตามเกรด (เขียว/ฟ้า/เหลือง/แดง)"""
         if not trips:
             return '<p class="text-muted text-center py-4">ไม่พบข้อมูล Trip ในช่วงวันที่ที่เลือก</p>'
 
